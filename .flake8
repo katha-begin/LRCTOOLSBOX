@@ -1,0 +1,29 @@
+[flake8]
+max-line-length = 88
+extend-ignore = E203, W503, E501
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .eggs,
+    *.egg-info,
+    .venv,
+    .tox,
+    .mypy_cache,
+    .pytest_cache
+
+per-file-ignores =
+    # Allow unused imports in __init__.py files
+    __init__.py:F401
+    # Allow long lines in configuration files
+    */config/*.py:E501
+    # Allow complex expressions in test files
+    test_*.py:C901
+
+# Error codes to ignore:
+# E203: whitespace before ':' (conflicts with black)
+# W503: line break before binary operator (conflicts with black)
+# E501: line too long (handled by black)
+# F401: imported but unused (common in __init__.py)
+# C901: too complex (sometimes necessary in UI code)
