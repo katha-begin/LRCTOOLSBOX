@@ -1,0 +1,106 @@
+[
+  {
+    "renderSetupLayer": {
+      "collections": [
+        {
+          "collection": {
+            "children": [],
+            "isolateSelected": false,
+            "name": "ao_collection",
+            "selector": {
+              "simpleSelector": {
+                "customFilterValue": "",
+                "pattern": "*",
+                "previousPattern": "",
+                "staticSelection": "",
+                "typeFilter": 1
+              }
+            },
+            "selfEnabled": true
+          }
+        }
+      ],
+      "name": "ao",
+      "notes": "<Not a Render Setup template file>",
+      "renderable": true
+    }
+  },
+  {
+    "renderSetupLayer": {
+      "collections": [
+        {
+          "collection": {
+            "children": [],
+            "isolateSelected": false,
+            "name": "normals_collection",
+            "selector": {
+              "simpleSelector": {
+                "customFilterValue": "",
+                "pattern": "*",
+                "previousPattern": "",
+                "staticSelection": "",
+                "typeFilter": 1
+              }
+            },
+            "selfEnabled": true
+          }
+        }
+      ],
+      "name": "normals",
+      "notes": "<Not a Render Setup template file>",
+      "renderable": true
+    }
+  },
+  {
+    "renderSetupLayer": {
+      "collections": [
+        {
+          "collection": {
+            "children": [],
+            "isolateSelected": false,
+            "name": "depth_collection",
+            "selector": {
+              "simpleSelector": {
+                "customFilterValue": "",
+                "pattern": "*",
+                "previousPattern": "",
+                "staticSelection": "",
+                "typeFilter": 1
+              }
+            },
+            "selfEnabled": true
+          }
+        }
+      ],
+      "name": "depth",
+      "notes": "<Not a Render Setup template file>",
+      "renderable": true
+    }
+  },
+  {
+    "renderSetupLayer": {
+      "collections": [
+        {
+          "collection": {
+            "children": [],
+            "isolateSelected": false,
+            "name": "motion_vectors_collection",
+            "selector": {
+              "simpleSelector": {
+                "customFilterValue": "",
+                "pattern": "*",
+                "previousPattern": "",
+                "staticSelection": "",
+                "typeFilter": 1
+              }
+            },
+            "selfEnabled": true
+          }
+        }
+      ],
+      "name": "motion_vectors",
+      "notes": "<Not a Render Setup template file>",
+      "renderable": true
+    }
+  }
+]

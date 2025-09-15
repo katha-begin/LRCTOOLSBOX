@@ -30,7 +30,7 @@ except ImportError:
         from PySide6 import QtWidgets, QtCore
     MAYA_AVAILABLE = False
 
-# from lrc_toolbox.ui.main_window import RenderSetupUI  # Will be implemented later
+from lrc_toolbox.ui.main_window import RenderSetupUI
 
 
 def get_maya_main_window() -> Optional[QtWidgets.QWidget]:
