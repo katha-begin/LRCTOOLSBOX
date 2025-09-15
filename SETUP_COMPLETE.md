@@ -7,7 +7,7 @@ The complete project structure for the LRC Toolbox v2.0 enhanced template manage
 ## 🏗️ Directory Structure Created
 
 ```
-maya/src/lrc_toolbox/
+maya/lrc_toolbox/
 ├── __init__.py                 # Main package initialization
 ├── main.py                     # Application entry point with Maya integration
 ├── core/                       # Business logic and data models
@@ -118,17 +118,17 @@ a5366db - Initial project structure setup for LRC Toolbox v2.0
 ### Development Commands
 ```bash
 # Start development
-cd maya/src
+cd maya
 python -m lrc_toolbox.main
 
 # Run tests
 pytest
 
 # Format code
-black maya/src/lrc_toolbox/
+black maya/lrc_toolbox/
 
 # Check linting
-flake8 maya/src/lrc_toolbox/
+flake8 maya/lrc_toolbox/
 ```
 
 The project is now ready for the UI-first implementation approach, starting with placeholder backends and functional UI components that can be immediately tested and validated by users.

@@ -46,7 +46,7 @@ Documentation = "https://lrc-toolbox.readthedocs.io"
 "Bug Tracker" = "https://github.com/lrc-toolbox/lrc-toolbox/issues"
 
 [tool.setuptools.packages.find]
-where = ["maya/src"]
+where = ["maya"]
 
 [tool.black]
 line-length = 88
