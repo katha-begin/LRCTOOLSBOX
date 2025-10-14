@@ -186,6 +186,40 @@ def list_layers() -> List[str]:
         return []
 
 
+def get_all_layers() -> List[Dict[str, Any]]:
+    """
+    Get all render layers with detailed information.
+
+    Returns list of dictionaries with layer information:
+    - name: Layer name
+    - enabled: Whether layer is enabled/renderable
+    - is_default: Whether this is the default render layer
+
+    Returns:
+        List of layer info dictionaries
+    """
+    try:
+        rs, _ = _api()
+        layers_info = []
+
+        for layer in rs.instance().getRenderLayers():
+            layer_info = {
+                "name": layer.name(),
+                "enabled": _layer_enabled(layer),
+                "is_default": layer.name() == "defaultRenderLayer"
+            }
+            layers_info.append(layer_info)
+
+        _dbg(f"get_all_layers -> {len(layers_info)} layers")
+        return layers_info
+
+    except Exception as e:
+        _dbg(f"get_all_layers failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
 def clear_layers(keep_default: bool = True) -> None:
     """Clear all render layers, optionally keeping the default layer."""
     rs, _ = _api()
