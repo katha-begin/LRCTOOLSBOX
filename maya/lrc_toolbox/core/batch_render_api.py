@@ -113,68 +113,156 @@ class BatchRenderAPI(QObject):
     def start_batch_render(self, config: RenderConfig) -> bool:
         """
         Start batch render with given configuration.
-        
+
         Args:
             config: Render configuration
-            
+
         Returns:
             True if render started successfully, False otherwise
         """
         if not self._initialized:
             if not self.initialize():
                 return False
-        
+
         try:
+            # Lazy-load managers
+            if self._execution_manager is None:
+                from .render_execution_manager import RenderExecutionManager
+                self._execution_manager = RenderExecutionManager()
+                self._execution_manager.detect_executables()
+
+            if self._process_manager is None:
+                from .process_manager import ProcessManager
+                self._process_manager = ProcessManager()
+
+            # Lazy-load scene preparation
+            from .scene_preparation import ScenePreparation
+            scene_prep = ScenePreparation()
+
             # Create process ID
             process_id = self._generate_process_id()
-            
+
+            # Parse frames
+            from ..utils.frame_parser import parse_frame_range
+            frames = parse_frame_range(config.frame_range)
+
             # Create render process
+            layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
+
             process = RenderProcess(
                 process_id=process_id,
-                layer_name=config.layers[0] if config.layers else "default",
+                layer_name=layer_name,
                 frame_range=config.frame_range,
+                frames=frames,
+                total_frames=len(frames),
                 status=ProcessStatus.INITIALIZING,
-                render_method=config.render_method
+                render_method=config.render_method,
+                start_time=datetime.now()
             )
-            
+
             self._processes[process_id] = process
-            
+
+            # Save temp scene
+            temp_scene = scene_prep.save_temp_scene(layer_name, process_id)
+            if not temp_scene:
+                raise RuntimeError("Failed to save temporary scene")
+
+            process.temp_file_path = temp_scene
+
+            # Select render method
+            method = self._execution_manager.select_render_method(config.render_method)
+            process.render_method = method
+
+            # Build command
+            command = self._execution_manager.build_render_command(
+                config, method, temp_scene
+            )
+
+            # Build environment
+            environment = self._execution_manager.build_environment(config)
+
+            # Start process
+            success = self._process_manager.start_process(
+                process_id,
+                command,
+                environment,
+                log_callback=self._handle_log_message
+            )
+
+            if not success:
+                raise RuntimeError("Failed to start render process")
+
+            process.status = ProcessStatus.RENDERING
+
             # Emit signal
             if hasattr(self, 'render_started'):
                 self.render_started.emit(process_id)
-            
+
             print(f"[BatchRenderAPI] Started render process: {process_id}")
             print(f"  Layer: {process.layer_name}")
-            print(f"  Frames: {config.frame_range}")
+            print(f"  Frames: {config.frame_range} ({len(frames)} frames)")
             print(f"  GPU: {config.gpu_id}")
-            
-            # TODO: Actually start the render process
-            # This will be implemented in TASK-004 and TASK-005
-            
+            print(f"  Method: {method.value}")
+
             return True
-            
+
         except Exception as e:
             print(f"[BatchRenderAPI] Failed to start render: {e}")
+
+            # Update process status
+            if process_id in self._processes:
+                self._processes[process_id].status = ProcessStatus.FAILED
+                self._processes[process_id].error_message = str(e)
+
             return False
     
     def stop_all_renders(self) -> bool:
         """
         Stop all active render processes.
-        
+
         Returns:
             True if all processes stopped successfully, False otherwise
         """
         try:
+            if self._process_manager is None:
+                return True
+
             for process_id, process in self._processes.items():
                 if process.status in [ProcessStatus.RENDERING, ProcessStatus.WAITING]:
+                    # Terminate process
+                    self._process_manager.terminate_process(process_id)
+
+                    # Update status
                     process.status = ProcessStatus.CANCELLED
+                    process.end_time = datetime.now()
+
                     print(f"[BatchRenderAPI] Cancelled process: {process_id}")
-            
+
             return True
-            
+
         except Exception as e:
             print(f"[BatchRenderAPI] Failed to stop renders: {e}")
             return False
+
+    def _handle_log_message(self, process_id: str, message: str) -> None:
+        """
+        Handle log message from render process.
+
+        Args:
+            process_id: Process ID
+            message: Log message
+        """
+        # Store log message
+        if process_id in self._processes:
+            process = self._processes[process_id]
+            process.log_messages.append(message)
+
+            # Parse progress from log (if available)
+            # This is renderer-specific, can be enhanced later
+
+            # Emit signal
+            if hasattr(self, 'render_log'):
+                self.render_log.emit(process_id, message)
     
     def get_render_status(self) -> List[RenderProcess]:
         """
@@ -224,10 +312,20 @@ class BatchRenderAPI(QObject):
         """Cleanup resources and stop all processes."""
         try:
             self.stop_all_renders()
+
+            # Cleanup process manager
+            if self._process_manager:
+                self._process_manager.cleanup_all()
+
+            # Cleanup temp files
+            from .scene_preparation import ScenePreparation
+            scene_prep = ScenePreparation()
+            scene_prep.cleanup_temp_files(keep_latest=5)
+
             self._processes.clear()
             self._initialized = False
             print("[BatchRenderAPI] Cleanup completed")
-            
+
         except Exception as e:
             print(f"[BatchRenderAPI] Cleanup error: {e}")
 
