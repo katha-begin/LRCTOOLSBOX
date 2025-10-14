@@ -99,36 +99,16 @@ class BatchRenderAPI(QObject):
     def _detect_system_resources(self) -> SystemInfo:
         """
         Detect system resources (GPU/CPU).
-        
+
         Returns:
             SystemInfo object with detected resources
         """
-        # Placeholder implementation - will be replaced with real detection
-        return SystemInfo(
-            gpu_count=2,
-            gpus=[
-                GPUInfo(
-                    device_id=0,
-                    name="NVIDIA GPU 0",
-                    memory_total=24 * 1024 * 1024 * 1024,  # 24GB
-                    memory_free=12 * 1024 * 1024 * 1024,  # 12GB
-                    is_available=False  # Reserved for Maya
-                ),
-                GPUInfo(
-                    device_id=1,
-                    name="NVIDIA GPU 1",
-                    memory_total=24 * 1024 * 1024 * 1024,  # 24GB
-                    memory_free=24 * 1024 * 1024 * 1024,  # 24GB
-                    is_available=True  # Available for batch
-                )
-            ],
-            cpu_cores=16,
-            cpu_threads=32,
-            available_gpus=1,
-            available_cpu_threads=28,
-            reserved_gpu_count=1,
-            reserved_cpu_threads=4
-        )
+        # Lazy-load system detector
+        if self._system_detector is None:
+            from .system_detector import SystemDetector
+            self._system_detector = SystemDetector()
+
+        return self._system_detector.detect_system_info()
     
     def start_batch_render(self, config: RenderConfig) -> bool:
         """
