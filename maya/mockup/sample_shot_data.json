@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "export_timestamp": "2024-01-15T14:30:45.123456",
+    "maya_version": "Maya 2024.0",
+    "scene_file": "V:/SWA/all/scene/Ep01/sq0010/SH0045/lighting/version/Ep01_sq0010_SH0045_lighting_master_v003.ma",
+    "shot_node": "shotShape1",
+    "show_code": "SWA"
+  },
+  "shot_info": {
+    "episode": "Ep01",
+    "sequence": "sq0010",
+    "shot": "SH0045",
+    "shot_name": "Ep01_sq0010_SH0045",
+    "start_frame": 1001,
+    "end_frame": 1120,
+    "frame_count": 120,
+    "version": "v003"
+  },
+  "render_settings": {
+    "current_renderer": "redshift",
+    "animation_enabled": true,
+    "extension_padding": 4,
+    "frame_step": 1.0,
+    "image_file_prefix": "W:/SWA/all/scene/Ep01/sq0010/SH0045/lighting/publish/v003/<RenderLayer>/<RenderLayer>"
+  },
+  "timeline_settings": {
+    "playback_start": 1001.0,
+    "playback_end": 1120.0,
+    "animation_start": 1001.0,
+    "animation_end": 1120.0
+  },
+  "shot_attributes": {
+    "sequenceStartFrame": 1001.0,
+    "sequenceEndFrame": 1120.0,
+    "scale": 1.0,
+    "preHold": 0.0,
+    "postHold": 0.0,
+    "clipIn": 1001.0,
+    "clipOut": 1120.0,
+    "clipDuration": 120.0,
+    "sourceStart": 1001.0,
+    "sourceEnd": 1120.0,
+    "sourceDuration": 120.0
+  }
+}

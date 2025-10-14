@@ -7,7 +7,7 @@ support for template management and naming conventions.
 
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from .defaults import DEFAULT_SETTINGS
@@ -170,6 +170,135 @@ class Settings:
     def get_ui_settings(self) -> Dict[str, Any]:
         """Get UI configuration settings."""
         return self.get("ui", {})
+
+    def get_persistence_settings(self) -> Dict[str, Any]:
+        """Get persistence configuration settings."""
+        return self.get("persistence", {})
+
+    def get_session_settings(self) -> Dict[str, Any]:
+        """Get session management settings."""
+        return self.get("session", {})
+
+    def save_navigation_context(self, context: Dict[str, Any]) -> None:
+        """Save navigation context to settings."""
+        try:
+            # Get current contexts and add new one
+            contexts = self.get("persistence.navigation_context.recent_contexts", [])
+
+            # Remove duplicate if exists
+            contexts = [c for c in contexts if c.get("display_name") != context.get("display_name")]
+
+            # Add new context at the beginning
+            contexts.insert(0, context)
+
+            # Limit history
+            limit = self.get("persistence.navigation_context.context_history_limit", 10)
+            contexts = contexts[:limit]
+
+            # Save back to settings
+            self.set("persistence.navigation_context.recent_contexts", contexts)
+            self.set("persistence.navigation_context.last_context", context)
+
+            # Auto-save if enabled
+            if self.get("session.save_on_context_change", True):
+                self.save_settings()
+
+            print(f"📍 Navigation context saved: {context.get('display_name', 'Unknown')}")
+
+        except Exception as e:
+            print(f"⚠️ Error saving navigation context: {e}")
+
+    def get_last_navigation_context(self) -> Optional[Dict[str, Any]]:
+        """Get the last used navigation context."""
+        return self.get("persistence.navigation_context.last_context")
+
+    def get_navigation_context_history(self) -> List[Dict[str, Any]]:
+        """Get navigation context history."""
+        return self.get("persistence.navigation_context.recent_contexts", [])
+
+    def add_recent_project(self, project_root: str, project_name: str = None) -> None:
+        """Add a project to recent projects list."""
+        try:
+            recent_projects = self.get("persistence.project_memory.recent_projects", [])
+
+            # Create project entry
+            project_entry = {
+                "root": project_root,
+                "name": project_name or os.path.basename(project_root),
+                "last_accessed": self._get_current_timestamp()
+            }
+
+            # Remove duplicate if exists
+            recent_projects = [p for p in recent_projects if p.get("root") != project_root]
+
+            # Add new project at the beginning
+            recent_projects.insert(0, project_entry)
+
+            # Limit recent projects
+            limit = self.get("persistence.project_memory.max_recent_projects", 5)
+            recent_projects = recent_projects[:limit]
+
+            # Save back to settings
+            self.set("persistence.project_memory.recent_projects", recent_projects)
+            self.set("persistence.project_memory.last_project_root", project_root)
+
+            # Auto-save
+            self.save_settings()
+            print(f"📁 Recent project added: {project_name or project_root}")
+
+        except Exception as e:
+            print(f"⚠️ Error adding recent project: {e}")
+
+    def get_recent_projects(self) -> List[Dict[str, Any]]:
+        """Get list of recent projects."""
+        return self.get("persistence.project_memory.recent_projects", [])
+
+    def get_last_project_root(self) -> str:
+        """Get the last used project root."""
+        return self.get("persistence.project_memory.last_project_root",
+                       self.get("project.project_root", "V:/SWA/all"))
+
+    def save_widget_state(self, widget_name: str, state: Dict[str, Any]) -> None:
+        """Save widget state to settings."""
+        try:
+            self.set(f"persistence.widget_states.{widget_name}", state)
+            print(f"💾 Widget state saved: {widget_name}")
+        except Exception as e:
+            print(f"⚠️ Error saving widget state for {widget_name}: {e}")
+
+    def get_widget_state(self, widget_name: str) -> Dict[str, Any]:
+        """Get widget state from settings."""
+        return self.get(f"persistence.widget_states.{widget_name}", {})
+
+    def save_file_operation_directory(self, operation_type: str, directory: str) -> None:
+        """Save last directory for file operations."""
+        try:
+            self.set(f"persistence.file_operations.last_{operation_type}_directory", directory)
+            print(f"📁 Last {operation_type} directory saved: {directory}")
+        except Exception as e:
+            print(f"⚠️ Error saving {operation_type} directory: {e}")
+
+    def get_file_operation_directory(self, operation_type: str) -> str:
+        """Get last directory for file operations."""
+        return self.get(f"persistence.file_operations.last_{operation_type}_directory", "")
+
+    def _get_current_timestamp(self) -> str:
+        """Get current timestamp as ISO string."""
+        from datetime import datetime
+        return datetime.now().isoformat()
+
+    def clear_navigation_history(self) -> None:
+        """Clear navigation context history."""
+        self.set("persistence.navigation_context.recent_contexts", [])
+        self.set("persistence.navigation_context.last_context", None)
+        self.save_settings()
+        print("🗑️ Navigation history cleared")
+
+    def clear_recent_projects(self) -> None:
+        """Clear recent projects list."""
+        self.set("persistence.project_memory.recent_projects", [])
+        self.save_settings()
+        print("🗑️ Recent projects cleared")
 
 
 # Global settings instance

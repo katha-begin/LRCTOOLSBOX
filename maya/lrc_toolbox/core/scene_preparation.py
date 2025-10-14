@@ -72,31 +72,38 @@ class ScenePreparation:
     def get_render_layers(self) -> List[str]:
         """
         Get list of available render layers from Maya Render Setup.
-        
+
+        This uses Maya's Render Setup system (not legacy render layers).
+        Returns only enabled/renderable layers.
+
         Returns:
-            List of render layer names (excludes defaultRenderLayer)
+            List of render layer names from Render Setup (excludes defaultRenderLayer)
         """
         if not self._maya_available:
             return []
-        
+
         try:
-            # Try to use render setup
+            # Use Render Setup API (not legacy render layers)
             from ..utils.render_layers import get_all_layers
-            
+
             layers = get_all_layers()
-            
+
             # Filter out default layer and get names
+            # get_all_layers() returns layers from Render Setup system
             layer_names = []
             for layer_info in layers:
                 name = layer_info.get("name", "")
-                if name and name != "defaultRenderLayer":
+                enabled = layer_info.get("enabled", True)
+
+                # Only include enabled layers, exclude default
+                if name and name != "defaultRenderLayer" and enabled:
                     layer_names.append(name)
-            
-            print(f"[ScenePrep] Found {len(layer_names)} render layers")
+
+            print(f"[ScenePrep] Found {len(layer_names)} render layers from Render Setup")
             return layer_names
-            
+
         except Exception as e:
-            print(f"[ScenePrep] Failed to get render layers: {e}")
+            print(f"[ScenePrep] Failed to get render layers from Render Setup: {e}")
             return []
     
     def save_temp_scene(self, layer_name: str, process_id: str) -> Optional[str]:

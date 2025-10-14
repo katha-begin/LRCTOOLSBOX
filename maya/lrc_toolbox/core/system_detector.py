@@ -38,28 +38,40 @@ class SystemDetector:
     def detect_system_info(self) -> SystemInfo:
         """
         Detect complete system information.
-        
+
         Returns:
             SystemInfo object with all detected resources
         """
         # Detect GPUs
         gpus = detect_cuda_gpus()
         gpu_count = len(gpus)
-        
+
         # Detect CPU
         cpu_cores, cpu_threads = self._detect_cpu_info()
-        
-        # Calculate available resources
+
+        # Calculate available resources based on GPU count
         reserved_gpus = self._settings["gpu_allocation"]["reserve_for_maya"]
         reserved_cpu = self._settings["cpu_allocation"]["reserve_for_maya"]
-        
-        available_gpus = max(0, gpu_count - reserved_gpus)
+
+        # For single GPU systems, don't reserve GPU (use same GPU for both)
+        if gpu_count <= 1:
+            reserved_gpus = 0
+            available_gpus = gpu_count
+            print("[SystemDetector] Single GPU system - GPU 0 will be shared between Maya and batch")
+        else:
+            available_gpus = max(0, gpu_count - reserved_gpus)
+
         available_cpu_threads = max(0, cpu_threads - reserved_cpu)
-        
+
         # Mark GPUs as available/reserved
         for i, gpu in enumerate(gpus):
-            gpu.is_available = i >= reserved_gpus
-        
+            if gpu_count <= 1:
+                # Single GPU - mark as available (shared)
+                gpu.is_available = True
+            else:
+                # Multi-GPU - reserve GPU 0 for Maya
+                gpu.is_available = i >= reserved_gpus
+
         self._system_info = SystemInfo(
             gpu_count=gpu_count,
             gpus=gpus,
@@ -70,9 +82,9 @@ class SystemDetector:
             reserved_gpu_count=reserved_gpus,
             reserved_cpu_threads=reserved_cpu
         )
-        
+
         self._print_system_info()
-        
+
         return self._system_info
     
     def _detect_cpu_info(self) -> Tuple[int, int]:
@@ -206,33 +218,50 @@ class SystemDetector:
     def get_available_gpu_ids(self) -> List[int]:
         """
         Get list of available GPU IDs for batch rendering.
-        
+
         Returns:
             List of GPU device IDs available for use
         """
         if not self._system_info:
             self.detect_system_info()
-        
+
         available_ids = []
         for gpu in self._system_info.gpus:
             if gpu.is_available:
                 available_ids.append(gpu.device_id)
-        
+
+        # If no GPUs detected but we should have at least one, add GPU 0
+        if not available_ids and self._system_info.gpu_count == 0:
+            print("[SystemDetector] No GPUs detected, adding GPU 0 as fallback")
+            available_ids.append(0)
+
         return available_ids
-    
+
     def get_recommended_gpu_id(self) -> int:
         """
         Get recommended GPU ID for batch rendering.
-        
+
+        For single GPU systems: Use GPU 0 (same as Maya)
+        For multi-GPU systems: Use GPU 1+ (reserve GPU 0 for Maya)
+
         Returns:
-            Recommended GPU device ID (defaults to 1)
+            Recommended GPU device ID
         """
+        if not self._system_info:
+            self.detect_system_info()
+
+        # Single GPU system - use GPU 0
+        if self._system_info.gpu_count <= 1:
+            print("[SystemDetector] Single GPU system detected, using GPU 0")
+            return 0
+
+        # Multi-GPU system - use available GPUs (not GPU 0)
         available_ids = self.get_available_gpu_ids()
-        
+
         if available_ids:
             return available_ids[0]
-        
-        # Fallback to GPU 1 if detection failed
+
+        # Fallback
         return self._settings["gpu_allocation"]["default_batch_gpu"]
     
     def get_recommended_cpu_threads(self) -> int:

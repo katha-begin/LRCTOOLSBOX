@@ -68,12 +68,14 @@ DEFAULT_UI_SETTINGS = {
         "width": 700,
         "height": 900,
         "docking_area": "right",
-        "allowed_areas": ["right", "left"]
+        "allowed_areas": ["right", "left"],
+        "tab_index": 0,
+        "restore_state": True
     },
     "file_list": {
         "icons": {
             "hero": "👑",
-            "template": "📋", 
+            "template": "📋",
             "version": "📝"
         },
         "colors": {
@@ -109,6 +111,42 @@ DEFAULT_MAYA_SETTINGS = {
     }
 }
 
+# Default persistence settings
+DEFAULT_PERSISTENCE_SETTINGS = {
+    "navigation_context": {
+        "remember_last_context": True,
+        "auto_restore_on_startup": True,
+        "context_history_limit": 10
+    },
+    "project_memory": {
+        "recent_projects": [],
+        "max_recent_projects": 5,
+        "auto_detect_project_changes": True,
+        "last_project_root": ""
+    },
+    "widget_states": {
+        "save_filter_states": True,
+        "save_column_widths": True,
+        "save_sort_orders": True,
+        "restore_expanded_items": True
+    },
+    "file_operations": {
+        "remember_last_directories": True,
+        "last_import_directory": "",
+        "last_export_directory": "",
+        "last_template_directory": ""
+    }
+}
+
+# Default session management settings
+DEFAULT_SESSION_SETTINGS = {
+    "auto_save_interval": 30,  # seconds
+    "session_backup_count": 3,
+    "restore_on_crash": True,
+    "save_on_context_change": True,
+    "session_file_name": "session.json"
+}
+
 # Combine all default settings
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "project": DEFAULT_PROJECT_SETTINGS,
@@ -116,5 +154,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "naming": DEFAULT_NAMING_SETTINGS,
     "ui": DEFAULT_UI_SETTINGS,
     "maya": DEFAULT_MAYA_SETTINGS,
+    "persistence": DEFAULT_PERSISTENCE_SETTINGS,
+    "session": DEFAULT_SESSION_SETTINGS,
     "version": "2.0.0"
 }

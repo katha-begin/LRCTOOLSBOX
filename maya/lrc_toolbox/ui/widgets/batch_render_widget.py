@@ -132,14 +132,16 @@ class BatchRenderWidget(QtWidgets.QWidget):
         layout = QtWidgets.QGridLayout(self.config_group)
         
         row = 0
-        
-        # Render layers
-        layout.addWidget(QtWidgets.QLabel("Render Layers:"), row, 0)
+
+        # Render Setup layers
+        layout.addWidget(QtWidgets.QLabel("Render Setup Layer:"), row, 0)
         self.layers_combo = QtWidgets.QComboBox()
         self.layers_combo.setMinimumWidth(200)
+        self.layers_combo.setToolTip("Select layer from Maya Render Setup (not legacy render layers)")
         layout.addWidget(self.layers_combo, row, 1)
-        
+
         self.refresh_layers_btn = QtWidgets.QPushButton("Refresh")
+        self.refresh_layers_btn.setToolTip("Refresh layers from Render Setup")
         self.refresh_layers_btn.clicked.connect(self._refresh_render_layers)
         layout.addWidget(self.refresh_layers_btn, row, 2)
         row += 1
@@ -154,17 +156,59 @@ class BatchRenderWidget(QtWidgets.QWidget):
         # GPU selection
         layout.addWidget(QtWidgets.QLabel("GPU:"), row, 0)
         self.gpu_combo = QtWidgets.QComboBox()
+        self.gpu_combo.setToolTip(
+            "Select GPU for batch rendering.\n"
+            "Single GPU: Uses GPU 0 (shared with Maya)\n"
+            "Multi-GPU: Uses GPU 1+ (GPU 0 reserved for Maya)"
+        )
         layout.addWidget(self.gpu_combo, row, 1, 1, 2)
         row += 1
         
-        # Render method
-        layout.addWidget(QtWidgets.QLabel("Method:"), row, 0)
+        # Render method with help button
+        layout.addWidget(QtWidgets.QLabel("Render Method:"), row, 0)
         self.method_combo = QtWidgets.QComboBox()
-        self.method_combo.addItem("Auto (with fallback)", RenderMethod.AUTO)
-        self.method_combo.addItem("mayapy Custom (Priority 1)", RenderMethod.MAYAPY_CUSTOM)
-        self.method_combo.addItem("Render.exe (Priority 2)", RenderMethod.RENDER_EXE)
-        self.method_combo.addItem("mayapy Basic (Priority 3)", RenderMethod.MAYAPY_BASIC)
-        layout.addWidget(self.method_combo, row, 1, 1, 2)
+
+        # Add methods with clear descriptions
+        self.method_combo.addItem("Auto (Recommended)", RenderMethod.AUTO)
+        self.method_combo.setItemData(0,
+            "Automatically chooses best method with fallback.\n"
+            "Tries: Custom Script → Render.exe → Basic Script\n"
+            "✓ Most reliable, handles failures automatically",
+            QtCore.Qt.ToolTipRole)
+
+        self.method_combo.addItem("Custom Script (Advanced)", RenderMethod.MAYAPY_CUSTOM)
+        self.method_combo.setItemData(1,
+            "Uses mayapy with custom Python script.\n"
+            "✓ Most flexible, allows pre/post operations\n"
+            "✓ Best for complex pipelines\n"
+            "⚠ Requires mayapy executable",
+            QtCore.Qt.ToolTipRole)
+
+        self.method_combo.addItem("Render.exe (Standard)", RenderMethod.RENDER_EXE)
+        self.method_combo.setItemData(2,
+            "Uses Maya's native Render.exe command.\n"
+            "✓ Most reliable and battle-tested\n"
+            "✓ Best for standard workflows\n"
+            "⚠ Requires Render.exe executable",
+            QtCore.Qt.ToolTipRole)
+
+        self.method_combo.addItem("Basic Script (Fallback)", RenderMethod.MAYAPY_BASIC)
+        self.method_combo.setItemData(3,
+            "Uses mayapy with basic render command.\n"
+            "✓ Simple and lightweight\n"
+            "⚠ Limited functionality\n"
+            "⚠ Last resort fallback",
+            QtCore.Qt.ToolTipRole)
+
+        self.method_combo.setToolTip("Choose render execution method (hover for details)")
+        layout.addWidget(self.method_combo, row, 1)
+
+        # Help button for method
+        method_help_btn = QtWidgets.QPushButton("?")
+        method_help_btn.setMaximumWidth(30)
+        method_help_btn.setToolTip("Click for detailed explanation")
+        method_help_btn.clicked.connect(self._show_method_help)
+        layout.addWidget(method_help_btn, row, 2)
         row += 1
         
         # Renderer
@@ -224,43 +268,61 @@ class BatchRenderWidget(QtWidgets.QWidget):
     def _refresh_system_info(self) -> None:
         """Refresh system information display."""
         system_info = self._api.get_system_info()
-        
+
         if system_info:
             # GPU info
-            gpu_text = f"{system_info.gpu_count} total"
+            if system_info.gpu_count == 0:
+                gpu_text = "No CUDA GPUs detected (CPU rendering only)"
+            elif system_info.gpu_count == 1:
+                gpu_text = f"1 GPU (shared with Maya)"
+            else:
+                gpu_text = f"{system_info.gpu_count} total ({system_info.available_gpus} for batch)"
             self.gpu_info_label.setText(gpu_text)
-            
+
             # CPU info
             cpu_text = f"{system_info.cpu_cores} cores, {system_info.cpu_threads} threads"
             self.cpu_info_label.setText(cpu_text)
-            
+
             # Available
-            avail_text = f"{system_info.available_gpus} GPUs, {system_info.available_cpu_threads} threads"
+            if system_info.gpu_count == 0:
+                avail_text = f"CPU only: {system_info.available_cpu_threads} threads"
+            elif system_info.gpu_count == 1:
+                avail_text = f"GPU 0 (shared), {system_info.available_cpu_threads} CPU threads"
+            else:
+                avail_text = f"{system_info.available_gpus} GPUs, {system_info.available_cpu_threads} threads"
             self.available_info_label.setText(avail_text)
-            
+
             # Update GPU combo
             self.gpu_combo.clear()
-            for gpu in system_info.gpus:
-                if gpu.is_available:
-                    self.gpu_combo.addItem(
-                        f"GPU {gpu.device_id}: {gpu.name}",
-                        gpu.device_id
-                    )
+
+            if system_info.gpu_count == 0:
+                # No GPU detected - add CPU option
+                self.gpu_combo.addItem("CPU Rendering (No GPU)", 0)
+            else:
+                # Add available GPUs
+                for gpu in system_info.gpus:
+                    if gpu.is_available:
+                        mem_gb = gpu.memory_total / (1024 ** 3)
+                        status = " (shared)" if system_info.gpu_count == 1 else ""
+                        self.gpu_combo.addItem(
+                            f"GPU {gpu.device_id}: {gpu.name} ({mem_gb:.0f}GB){status}",
+                            gpu.device_id
+                        )
     
     def _refresh_render_layers(self) -> None:
-        """Refresh render layers list."""
+        """Refresh render layers list from Render Setup."""
         from ...core.scene_preparation import ScenePreparation
-        
+
         scene_prep = ScenePreparation()
         layers = scene_prep.get_render_layers()
-        
+
         self.layers_combo.clear()
         self.layers_combo.addItems(layers)
-        
+
         if layers:
-            self.log_text.append(f"[UI] Found {len(layers)} render layers")
+            self.log_text.append(f"[UI] Found {len(layers)} layers from Render Setup")
         else:
-            self.log_text.append("[UI] No render layers found")
+            self.log_text.append("[UI] No Render Setup layers found. Please create layers in Render Setup first.")
     
     def _start_render(self) -> None:
         """Start batch render."""
@@ -312,6 +374,86 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.log_text.append("[UI] Stopped all renders")
+
+    def _show_method_help(self) -> None:
+        """Show detailed help dialog for render methods."""
+        help_text = """
+<h2>Render Method Explanation</h2>
+
+<h3>🌟 Auto (Recommended)</h3>
+<p><b>What it does:</b> Automatically selects the best method and falls back if it fails.</p>
+<p><b>How it works:</b></p>
+<ol>
+  <li>Tries <b>Custom Script</b> first (most flexible)</li>
+  <li>Falls back to <b>Render.exe</b> if custom fails (most reliable)</li>
+  <li>Falls back to <b>Basic Script</b> as last resort</li>
+</ol>
+<p><b>When to use:</b> <span style="color: green;">Always use this unless you have specific needs!</span></p>
+<p><b>Pros:</b> Handles failures automatically, most reliable</p>
+
+<hr>
+
+<h3>🔧 Custom Script (Advanced)</h3>
+<p><b>What it does:</b> Runs mayapy with a custom Python script for maximum control.</p>
+<p><b>How it works:</b> Creates a Python script that opens your scene, sets up render settings, and renders each frame individually.</p>
+<p><b>When to use:</b> When you need custom pre/post render operations or complex pipeline integration.</p>
+<p><b>Pros:</b> Most flexible, allows custom operations</p>
+<p><b>Cons:</b> Requires mayapy, slightly slower</p>
+
+<hr>
+
+<h3>⚙️ Render.exe (Standard)</h3>
+<p><b>What it does:</b> Uses Maya's native batch renderer (Render.exe on Windows, Render on Linux).</p>
+<p><b>How it works:</b> Calls Maya's built-in batch render command directly.</p>
+<p><b>When to use:</b> For standard rendering workflows without custom operations.</p>
+<p><b>Pros:</b> Most reliable, battle-tested, handles edge cases</p>
+<p><b>Cons:</b> Less flexible, no custom operations</p>
+
+<hr>
+
+<h3>📦 Basic Script (Fallback)</h3>
+<p><b>What it does:</b> Simple mayapy script with basic batch render command.</p>
+<p><b>How it works:</b> Opens scene and calls Maya's batchRender() command.</p>
+<p><b>When to use:</b> Only as last resort when other methods fail.</p>
+<p><b>Pros:</b> Simple, lightweight</p>
+<p><b>Cons:</b> Limited functionality, least reliable</p>
+
+<hr>
+
+<h3>💡 Quick Guide</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Your Situation</th>
+    <th>Recommended Method</th>
+  </tr>
+  <tr>
+    <td>Normal rendering</td>
+    <td><b>Auto</b> (let system decide)</td>
+  </tr>
+  <tr>
+    <td>Need custom operations</td>
+    <td><b>Custom Script</b></td>
+  </tr>
+  <tr>
+    <td>Standard workflow</td>
+    <td><b>Render.exe</b></td>
+  </tr>
+  <tr>
+    <td>Troubleshooting</td>
+    <td>Try each method manually</td>
+  </tr>
+</table>
+
+<p><b>Note:</b> All methods use the same GPU allocation and frame range settings.</p>
+        """
+
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setWindowTitle("Render Method Help")
+        msg_box.setTextFormat(QtCore.Qt.RichText)
+        msg_box.setText(help_text)
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg_box.setMinimumWidth(600)
+        msg_box.exec_()
     
     def _on_render_started(self, process_id: str) -> None:
         """Handle render started signal."""
