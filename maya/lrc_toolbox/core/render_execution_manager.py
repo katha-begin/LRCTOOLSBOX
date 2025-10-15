@@ -185,53 +185,27 @@ class RenderExecutionManager:
             pass
 
         # Project directory (extract from scene path)
+        # Simplified - just use scene directory's parent
         try:
-            import re
-            # Find project root (path up to /scene/ or /asset/)
-            match = re.search(r'(.+[/\\](?:scene|asset))[/\\]', scene_file, re.IGNORECASE)
-            if match:
-                project_root = os.path.dirname(match.group(1))  # Go up one level
-                command.extend(["-proj", project_root])
-                print(f"[RenderExec] Project directory: {project_root}")
-        except:
-            pass
+            scene_dir = os.path.dirname(scene_file)
+            project_root = os.path.dirname(scene_dir)
+            command.extend(["-proj", project_root])
+            print(f"[RenderExec] Project directory: {project_root}")
+        except Exception as e:
+            print(f"[RenderExec] Could not set project directory: {e}")
 
-        # Output directory (images folder in project)
+        # Output directory - simplified to avoid crashes
+        # Just use images folder next to scene folder
         try:
             if config.layers:
                 layer_name = config.layers[0]
-                # Extract context from scene path for output directory
-                import re
-                from ..utils.context_detector import context_detector
-                context = context_detector.detect_context_from_path(scene_file)
+                scene_dir = os.path.dirname(scene_file)
+                images_dir = os.path.join(os.path.dirname(scene_dir), "images", layer_name)
 
-                if context:
-                    from ..core.models import ProjectType
-                    if context.type == ProjectType.SHOT:
-                        # shots/Ep01/sq0010/SH0010/MASTER_BG_A
-                        output_dir = os.path.join(
-                            os.path.dirname(os.path.dirname(scene_file)),
-                            "images",
-                            context.episode,
-                            context.sequence,
-                            context.shot,
-                            layer_name
-                        )
-                    else:
-                        # assets/characters/main/hero_char/HERO_CHAR_BG_A
-                        output_dir = os.path.join(
-                            os.path.dirname(os.path.dirname(scene_file)),
-                            "images",
-                            context.category,
-                            context.subcategory,
-                            context.asset,
-                            layer_name
-                        )
-
-                    # Create output directory if it doesn't exist
-                    os.makedirs(output_dir, exist_ok=True)
-                    command.extend(["-rd", output_dir])
-                    print(f"[RenderExec] Output directory: {output_dir}")
+                # Create output directory if it doesn't exist
+                os.makedirs(images_dir, exist_ok=True)
+                command.extend(["-rd", images_dir])
+                print(f"[RenderExec] Output directory: {images_dir}")
         except Exception as e:
             print(f"[RenderExec] Could not set output directory: {e}")
 
