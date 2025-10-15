@@ -152,6 +152,7 @@ Thumbs.db
 
 # Project specific
 *.log
+logs.md
 temp/
 tmp/
 .plan/
@@ -161,3 +162,19 @@ user_settings.json
 .lrc_toolbox/
 templates/temp/
 exports/temp/
+
+# Development files (not for production)
+maya/lrc_toolbox/tests/test_*.py
+maya/lrc_toolbox/tests/debug_*.py
+maya/lrc_toolbox/docs/*_RESEARCH.md
+maya/lrc_toolbox/docs/*_DEBUG.md
+BATCH_RENDER_COMPLETE.md
+
+# Cache and temporary files
+*.pyc
+*.pyo
+__pycache__/
+.cache/
+*.tmp
+*.temp
+.tmp/
