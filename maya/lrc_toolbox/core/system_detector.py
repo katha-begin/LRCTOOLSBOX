@@ -46,6 +46,27 @@ class SystemDetector:
         gpus = detect_cuda_gpus()
         gpu_count = len(gpus)
 
+        # Check for manual GPU configuration override
+        manual_gpu_count = self._settings["gpu_allocation"].get("manual_gpu_count", 0)
+        if manual_gpu_count > 0 and gpu_count == 0:
+            print(f"[SystemDetector] Auto-detect failed, using manual GPU count: {manual_gpu_count}")
+
+            # Create manual GPU entries
+            manual_gpu_name = self._settings["gpu_allocation"].get("manual_gpu_name", "NVIDIA GPU")
+            gpus = []
+            for i in range(manual_gpu_count):
+                from ..core.models import GPUInfo
+                gpu_info = GPUInfo(
+                    device_id=i,
+                    name=f"{manual_gpu_name} {i}",
+                    memory_total=24 * 1024 * 1024 * 1024,  # Assume 24GB
+                    memory_free=20 * 1024 * 1024 * 1024,   # Assume 20GB free
+                    is_available=True,
+                    compute_capability=None
+                )
+                gpus.append(gpu_info)
+            gpu_count = len(gpus)
+
         # Detect CPU
         cpu_cores, cpu_threads = self._detect_cpu_info()
 

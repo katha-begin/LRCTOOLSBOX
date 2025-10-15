@@ -14,6 +14,8 @@ DEFAULT_BATCH_RENDER_SETTINGS = {
         "reserve_for_maya": 1,  # Number of GPUs to reserve for Maya session
         "default_batch_gpu": 1,  # Default GPU ID for batch rendering (0-indexed)
         "auto_detect": True,  # Auto-detect available GPUs
+        "manual_gpu_count": 0,  # Manual GPU count (0 = auto-detect, >0 = override)
+        "manual_gpu_name": "NVIDIA GPU",  # Manual GPU name when auto-detect fails
     },
     "cpu_allocation": {
         "reserve_for_maya": 4,  # Number of CPU cores to reserve for Maya
