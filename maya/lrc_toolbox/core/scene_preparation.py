@@ -129,11 +129,9 @@ class ScenePreparation:
                 print("[ScenePrep] No scene open to save")
                 return None
             
-            scene_name = os.path.splitext(os.path.basename(current_scene))[0]
-            
-            # Generate temp filename
-            temp_file = self._temp_manager.generate_temp_filename(
-                scene_name, layer_name, process_id
+            # Generate temp filepath (context-aware)
+            temp_file = self._temp_manager.generate_temp_filepath(
+                current_scene, layer_name, process_id
             )
             
             # Save scene as Maya ASCII
