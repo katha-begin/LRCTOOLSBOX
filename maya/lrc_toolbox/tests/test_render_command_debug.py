@@ -27,19 +27,21 @@ def test_render_command_debug():
         
         # Create test config
         config = RenderConfig(
+            scene_file=current_scene,
             frame_range="1-10",
             layers=["MASTER_BG_A"],
             gpu_id=0,
             cpu_threads=4,
             renderer="redshift",
-            method=RenderMethod.AUTO
+            render_method=RenderMethod.AUTO
         )
         
         print("\nTest Config:")
+        print(f"  Scene File: {config.scene_file}")
         print(f"  Frame Range: {config.frame_range}")
         print(f"  Layers: {config.layers}")
         print(f"  Renderer: {config.renderer}")
-        print(f"  Method: {config.method}")
+        print(f"  Method: {config.render_method}")
         
         # Initialize execution manager
         print("\n" + "=" * 80)
