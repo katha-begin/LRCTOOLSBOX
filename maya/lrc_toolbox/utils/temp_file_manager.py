@@ -121,6 +121,9 @@ class TempFileManager:
         Returns:
             Temp directory path
         """
+        # CRITICAL FIX: Clean layer name for directory path
+        clean_layer = self._clean_filename(layer_name)
+
         # Find project root (path up to /scene/ or /asset/)
         if context.type == ProjectType.SHOT:
             # Find /scene/ in path
@@ -134,7 +137,7 @@ class TempFileManager:
                     context.sequence,
                     context.shot,
                     context.department,
-                    layer_name
+                    clean_layer  # Use cleaned name
                 )
         else:  # ASSET
             # Find /asset/ in path
@@ -148,7 +151,7 @@ class TempFileManager:
                     context.subcategory,
                     context.asset,
                     context.department,
-                    layer_name
+                    clean_layer  # Use cleaned name
                 )
 
         # Fallback if pattern not found
@@ -164,13 +167,16 @@ class TempFileManager:
         Returns:
             Fallback temp directory path
         """
+        # CRITICAL FIX: Clean layer name for directory path
+        clean_layer = self._clean_filename(layer_name)
+
         # Get user Documents folder
         if os.name == 'nt':  # Windows
             documents = os.path.join(os.path.expanduser('~'), 'Documents')
         else:  # Unix/Mac
             documents = os.path.expanduser('~/Documents')
 
-        return os.path.join(documents, 'maya_batch_tmp', layer_name)
+        return os.path.join(documents, 'maya_batch_tmp', clean_layer)
 
     def _generate_context_filename(self, context: NavigationContext, layer_name: str,
                                    version: str, process_id: str) -> str:
@@ -240,6 +246,10 @@ class TempFileManager:
         """
         # Remove file extension if present
         name = os.path.splitext(name)[0]
+
+        # CRITICAL FIX: Remove newlines and other whitespace
+        name = name.replace('\n', '_').replace('\r', '_').replace('\t', '_')
+        name = ' '.join(name.split())  # Normalize whitespace
 
         # Replace invalid characters
         invalid_chars = '<>:"/\\|?*'

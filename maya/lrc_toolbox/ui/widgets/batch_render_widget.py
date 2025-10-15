@@ -53,8 +53,11 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self._api = BatchRenderAPI()
         self._api.initialize()
 
-        # Log viewer dialog
-        self._log_viewer = None
+        # Log viewer dialog - CRITICAL: Create immediately to capture all logs
+        self._log_viewer = RenderLogViewer(self)
+
+        # Floating process table
+        self._floating_table = None
 
         # Connect signals
         self._connect_api_signals()
@@ -95,14 +98,12 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self._create_system_info_section()
         self._create_config_section()
         self._create_process_table_section()
-        self._create_log_section()
-        self._create_control_section()
-        
+        self._create_control_section()  # Log button moved here
+
         # Add to main layout
         main_layout.addWidget(self.system_info_group)
         main_layout.addWidget(self.config_group)
         main_layout.addWidget(self.process_table_group, stretch=1)
-        main_layout.addWidget(self.log_group, stretch=1)
         main_layout.addWidget(self.control_group)
     
     def _create_system_info_section(self) -> None:
@@ -294,11 +295,31 @@ class BatchRenderWidget(QtWidgets.QWidget):
         layout.addWidget(method_help_btn, row, 2)
         row += 1
         
-        # Renderer
+        # Renderer with GPU/CPU mode
         layout.addWidget(QtWidgets.QLabel("Renderer:"), row, 0)
+
+        renderer_container = QtWidgets.QWidget()
+        renderer_layout = QtWidgets.QHBoxLayout(renderer_container)
+        renderer_layout.setContentsMargins(0, 0, 0, 0)
+        renderer_layout.setSpacing(8)
+
         self.renderer_combo = QtWidgets.QComboBox()
         self.renderer_combo.addItems(["redshift", "arnold", "vray"])
-        layout.addWidget(self.renderer_combo, row, 1, 1, 2)
+        self.renderer_combo.currentIndexChanged.connect(self._on_renderer_changed)
+        renderer_layout.addWidget(self.renderer_combo, 2)
+
+        # GPU/CPU mode for renderer
+        self.render_mode_combo = QtWidgets.QComboBox()
+        self.render_mode_combo.addItem("GPU", "gpu")
+        self.render_mode_combo.addItem("CPU", "cpu")
+        self.render_mode_combo.setToolTip(
+            "GPU: Use GPU acceleration (faster, requires CUDA)\n"
+            "CPU: Use CPU rendering (slower, more compatible)"
+        )
+        renderer_layout.addWidget(self.render_mode_combo, 1)
+
+        layout.addWidget(renderer_container, row, 1, 1, 2)
+        row += 1
     
     def _create_process_table_section(self) -> None:
         """Create process monitoring table - IMPROVED: Compact with float button."""
@@ -324,7 +345,7 @@ class BatchRenderWidget(QtWidgets.QWidget):
 
         layout.addLayout(header_layout)
 
-        # Compact table
+        # Process table - IMPROVED: Taller to match widget
         self.process_table = QtWidgets.QTableWidget()
         self.process_table.setColumnCount(7)
         self.process_table.setHorizontalHeaderLabels([
@@ -333,7 +354,8 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self.process_table.horizontalHeader().setStretchLastSection(False)
         self.process_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.process_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.process_table.setMaximumHeight(150)  # Compact height
+        self.process_table.setMinimumHeight(200)  # Taller minimum height
+        # No maximum height - let it expand with widget
         self.process_table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.process_table.customContextMenuRequested.connect(self._show_process_context_menu)
 
@@ -348,39 +370,27 @@ class BatchRenderWidget(QtWidgets.QWidget):
 
         layout.addWidget(self.process_table)
     
-    def _create_log_section(self) -> None:
-        """Create log viewer section - IMPROVED: More compact."""
-        self.log_group = QtWidgets.QGroupBox("Logs")
-        layout = QtWidgets.QHBoxLayout(self.log_group)  # Horizontal for compact layout
-        layout.setSpacing(8)
-
-        # Compact info label
-        info_label = QtWidgets.QLabel("View render logs in popup window:")
-        layout.addWidget(info_label)
-
-        layout.addStretch()
-
-        # Open log viewer button - IMPROVED: Smaller
-        self.open_logs_btn = QtWidgets.QPushButton("Open Log Viewer")
-        self.open_logs_btn.setMinimumHeight(30)  # Reduced from 40
-        self.open_logs_btn.clicked.connect(self._open_log_viewer)
-        layout.addWidget(self.open_logs_btn)
-    
     def _create_control_section(self) -> None:
-        """Create control buttons section."""
+        """Create control buttons section - IMPROVED: Log button moved here."""
         self.control_group = QtWidgets.QGroupBox("Controls")
         layout = QtWidgets.QHBoxLayout(self.control_group)
-        
+
         self.start_btn = QtWidgets.QPushButton("Start Batch Render")
         self.start_btn.setMinimumHeight(40)
         self.start_btn.clicked.connect(self._start_render)
         layout.addWidget(self.start_btn)
-        
+
         self.stop_btn = QtWidgets.QPushButton("Stop All")
         self.stop_btn.setMinimumHeight(40)
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop_render)
         layout.addWidget(self.stop_btn)
+
+        # Log viewer button - MOVED from separate section
+        self.open_logs_btn = QtWidgets.QPushButton("Open Log Viewer")
+        self.open_logs_btn.setMinimumHeight(40)  # Match other buttons
+        self.open_logs_btn.clicked.connect(self._open_log_viewer)
+        layout.addWidget(self.open_logs_btn)
     
     def _refresh_system_info(self) -> None:
         """Refresh system information display."""
@@ -459,6 +469,23 @@ class BatchRenderWidget(QtWidgets.QWidget):
         else:  # auto
             self.gpu_combo.setEnabled(False)
             self.concurrent_jobs_spin.setEnabled(True)
+
+    def _on_renderer_changed(self, index: int) -> None:
+        """Handle renderer change - update render mode options."""
+        renderer = self.renderer_combo.currentText()
+
+        # Arnold supports both GPU and CPU well
+        # Redshift is GPU-only (but has CPU fallback)
+        # V-Ray supports both
+
+        if renderer == "redshift":
+            # Redshift is primarily GPU
+            self.render_mode_combo.setCurrentIndex(0)  # Default to GPU
+        elif renderer == "arnold":
+            # Arnold CPU is very common
+            self.render_mode_combo.setCurrentIndex(1)  # Default to CPU
+        else:  # vray
+            self.render_mode_combo.setCurrentIndex(0)  # Default to GPU
     
     def _start_render(self) -> None:
         """Start batch render - IMPROVED: Multiple layers support."""
@@ -468,7 +495,18 @@ class BatchRenderWidget(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "Error", "Please select at least one render layer")
             return
 
-        layers = [item.text() for item in selected_items]
+        # CRITICAL FIX: Clean layer names (remove newlines, extra whitespace)
+        layers = []
+        for item in selected_items:
+            layer_name = item.text().strip()
+            # Remove newlines and normalize whitespace
+            layer_name = ' '.join(layer_name.split())
+            if layer_name:
+                layers.append(layer_name)
+
+        if not layers:
+            QtWidgets.QMessageBox.warning(self, "Error", "No valid layers selected")
+            return
 
         frame_range = self.frame_range_edit.text().strip()
         if not frame_range:
@@ -527,9 +565,16 @@ class BatchRenderWidget(QtWidgets.QWidget):
         gpu_mode = self.gpu_mode_combo.currentData()
         max_concurrent = self.concurrent_jobs_spin.value()
 
-        # Get method and renderer
+        # Get method, renderer, and render mode
         method = self.method_combo.currentData()
         renderer = self.renderer_combo.currentText()
+        render_mode = self.render_mode_combo.currentData()  # "gpu" or "cpu"
+        use_gpu = (render_mode == "gpu")
+
+        # CRITICAL: Set max concurrent jobs in API
+        self._api.set_max_concurrent_jobs(max_concurrent)
+
+        print(f"[UI] Render settings: {renderer} ({render_mode.upper()}), Max concurrent: {max_concurrent}")
 
         # Confirm multiple layers
         if len(layers) > 1:
@@ -540,14 +585,15 @@ class BatchRenderWidget(QtWidgets.QWidget):
                 f"Layers: {', '.join(layers)}\n"
                 f"Frames: {frame_range}\n"
                 f"GPU Mode: {gpu_mode.upper()}\n"
-                f"Max Concurrent: {max_concurrent if gpu_mode == 'auto' else 'N/A'}",
+                f"Max Concurrent: {max_concurrent if gpu_mode == 'auto' else 'N/A'}\n\n"
+                f"Jobs will be queued and start automatically as slots become available.",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                 QtWidgets.QMessageBox.Yes
             )
             if result == QtWidgets.QMessageBox.No:
                 return
 
-        # Start render for each layer
+        # Start render for each layer (will queue if needed)
         success_count = 0
         for layer in layers:
             # Get GPU for this job
@@ -566,7 +612,8 @@ class BatchRenderWidget(QtWidgets.QWidget):
                 frame_range=frame_range,
                 gpu_id=gpu_id,
                 render_method=method,
-                renderer=renderer
+                renderer=renderer,
+                use_gpu=use_gpu  # Pass GPU/CPU mode
             )
 
             # Start render
@@ -591,28 +638,20 @@ class BatchRenderWidget(QtWidgets.QWidget):
 
     def _open_log_viewer(self) -> None:
         """Open the log viewer dialog."""
-        if not self._log_viewer:
-            self._log_viewer = RenderLogViewer(self)
-
-            # Add existing processes
-            processes = self._api.get_render_status()
-            for process in processes:
-                display_name = f"{process.layer_name} - {process.frame_range}"
-                self._log_viewer.add_process(process.process_id, display_name)
-
+        # Log viewer is already created in __init__, just show it
         self._log_viewer.show()
         self._log_viewer.raise_()
         self._log_viewer.activateWindow()
 
     def _float_process_table(self) -> None:
-        """Open process table in floating window."""
-        # TODO: Implement floating process table window
-        QtWidgets.QMessageBox.information(
-            self,
-            "Coming Soon",
-            "Floating process table window will be implemented in next update.\n\n"
-            "For now, you can resize the main window to see more processes."
-        )
+        """Open process table in floating window - IMPLEMENTED!"""
+        if not self._floating_table:
+            from ..floating_process_table import FloatingProcessTable
+            self._floating_table = FloatingProcessTable(self._api, self)
+
+        self._floating_table.show()
+        self._floating_table.raise_()
+        self._floating_table.activateWindow()
 
     def _show_process_context_menu(self, position) -> None:
         """Show context menu for process table."""
@@ -735,8 +774,16 @@ class BatchRenderWidget(QtWidgets.QWidget):
 
     def _view_job_logs(self, process_id: str) -> None:
         """View logs for a specific job."""
-        self._open_log_viewer()
-        # TODO: Select the process in log viewer
+        # Open log viewer
+        self._log_viewer.show()
+        self._log_viewer.raise_()
+        self._log_viewer.activateWindow()
+
+        # Select the specific process in the dropdown
+        for i in range(self._log_viewer.process_combo.count()):
+            if self._log_viewer.process_combo.itemData(i) == process_id:
+                self._log_viewer.process_combo.setCurrentIndex(i)
+                break
 
     def _show_frame_range_help(self) -> None:
         """Show detailed help dialog for frame range syntax."""
@@ -1100,19 +1147,12 @@ class BatchRenderWidget(QtWidgets.QWidget):
             actions_layout.setContentsMargins(2, 2, 2, 2)
             actions_layout.setSpacing(2)
 
-            # Re-render button
+            # Re-render button only (logs accessible via right-click or main button)
             rerender_btn = QtWidgets.QPushButton("⟳")
             rerender_btn.setToolTip("Re-render with custom settings")
             rerender_btn.setMaximumWidth(30)
             rerender_btn.clicked.connect(lambda checked, pid=process.process_id: self._rerender_job(pid))
             actions_layout.addWidget(rerender_btn)
-
-            # View logs button
-            logs_btn = QtWidgets.QPushButton("📋")
-            logs_btn.setToolTip("View logs")
-            logs_btn.setMaximumWidth(30)
-            logs_btn.clicked.connect(lambda checked, pid=process.process_id: self._view_job_logs(pid))
-            actions_layout.addWidget(logs_btn)
 
             self.process_table.setCellWidget(row, 6, actions_widget)
     

@@ -331,6 +331,7 @@ class RenderConfig:
     render_mode: RenderMode = RenderMode.SEPARATE
     render_method: RenderMethod = RenderMethod.AUTO
     renderer: str = "redshift"
+    use_gpu: bool = True  # True for GPU rendering, False for CPU
     output_path: Optional[str] = None
     custom_settings: Dict[str, Any] = field(default_factory=dict)
 
@@ -351,6 +352,7 @@ class RenderProcess:
     temp_file_path: Optional[str] = None
     scene_file: Optional[str] = None  # Original scene file (not temp)
     render_method: RenderMethod = RenderMethod.AUTO
+    gpu_id: int = 1  # GPU ID for this render
     error_message: Optional[str] = None
     log_messages: List[str] = field(default_factory=list)
     output_path: Optional[str] = None  # Parsed from render logs

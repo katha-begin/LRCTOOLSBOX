@@ -78,6 +78,10 @@ class BatchRenderAPI(QObject):
                 self._monitor_timer.setInterval(2000)  # Check every 2 seconds
             except:
                 pass
+
+        # Queue management - CRITICAL FIX for concurrent job control
+        self._job_queue: List[str] = []  # Stores process_ids, not configs
+        self._max_concurrent_jobs = 1  # Default: 1 job at a time
     
     def initialize(self) -> bool:
         """
@@ -119,22 +123,134 @@ class BatchRenderAPI(QObject):
             self._system_detector = SystemDetector()
 
         return self._system_detector.detect_system_info()
-    
+
+    def set_max_concurrent_jobs(self, max_jobs: int) -> None:
+        """
+        Set maximum concurrent render jobs.
+
+        Args:
+            max_jobs: Maximum number of jobs to run concurrently (1-8)
+        """
+        self._max_concurrent_jobs = max(1, min(8, max_jobs))
+        print(f"[BatchRenderAPI] Max concurrent jobs set to: {self._max_concurrent_jobs}")
+
+        # Try to start queued jobs
+        self._process_queue()
+
+    def _get_active_job_count(self) -> int:
+        """Get number of currently active (rendering) jobs.
+
+        Note: WAITING jobs are queued, not active. Only count RENDERING and INITIALIZING.
+        """
+        return sum(1 for p in self._processes.values()
+                  if p.status in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING])
+
+    def _process_queue(self) -> None:
+        """Process job queue - start jobs if slots available."""
+        active_count = self._get_active_job_count()
+
+        # Start jobs while we have queue and available slots
+        while self._job_queue and active_count < self._max_concurrent_jobs:
+            process_id = self._job_queue.pop(0)
+            process = self._processes.get(process_id)
+            if process:
+                print(f"[BatchRenderAPI] Starting queued job: {process.layer_name}")
+                self._start_render_immediate(process_id)
+                active_count += 1
+
     def start_batch_render(self, config: RenderConfig) -> bool:
         """
         Start batch render with given configuration.
+        Uses queue system to respect max_concurrent_jobs limit.
 
         Args:
             config: Render configuration
 
         Returns:
-            True if render started successfully, False otherwise
+            True if render queued/started successfully, False otherwise
         """
         if not self._initialized:
             if not self.initialize():
                 return False
 
+        # CRITICAL FIX: Create process entry immediately (even if queued)
+        # This makes queued jobs visible in the UI
+
+        # Create process ID
+        process_id = self._generate_process_id()
+
+        # Parse frames
+        from ..utils.frame_parser import parse_frame_range
+        frames = parse_frame_range(config.frame_range)
+
+        # Create render process
+        layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
+
+        process = RenderProcess(
+            process_id=process_id,
+            layer_name=layer_name,
+            frame_range=config.frame_range,
+            frames=frames,
+            total_frames=len(frames),
+            status=ProcessStatus.WAITING,  # Start as WAITING
+            render_method=config.render_method,
+            gpu_id=config.gpu_id,  # Store GPU ID
+            start_time=None  # Will be set when actually starts
+        )
+
+        # Store config in process for later use
+        if not hasattr(process, '_config'):
+            process._config = config
+
+        self._processes[process_id] = process
+
+        # Emit signal so UI updates
+        if hasattr(self, 'render_started'):
+            self.render_started.emit(process_id)
+
+        # Check if we can start immediately or need to queue
+        active_count = self._get_active_job_count()
+
+        print(f"[BatchRenderAPI] Job check: active={active_count}, max={self._max_concurrent_jobs}")
+
+        if active_count < self._max_concurrent_jobs:
+            # Start immediately
+            print(f"[BatchRenderAPI] Starting job immediately ({active_count + 1}/{self._max_concurrent_jobs})")
+            result = self._start_render_immediate(process_id)
+            if not result:
+                print(f"[BatchRenderAPI] ERROR: Failed to start job {process_id}")
+                process.status = ProcessStatus.FAILED
+                process.error_message = "Failed to start render process"
+            return result
+        else:
+            # Add to queue (store process_id, not config)
+            self._job_queue.append(process_id)
+            print(f"[BatchRenderAPI] Job queued: {layer_name} (Queue size: {len(self._job_queue)})")
+            return True
+
+    def _start_render_immediate(self, process_id: str) -> bool:
+        """
+        Start render immediately for an existing process.
+
+        Args:
+            process_id: Process ID to start
+
+        Returns:
+            True if render started successfully, False otherwise
+        """
         try:
+            # Get existing process
+            process = self._processes.get(process_id)
+            if not process:
+                print(f"[BatchRenderAPI] ERROR: Process {process_id} not found")
+                return False
+
+            # Get config from process
+            config = getattr(process, '_config', None)
+            if not config:
+                print(f"[BatchRenderAPI] ERROR: No config found for process {process_id}")
+                return False
+
             # Lazy-load managers
             if self._execution_manager is None:
                 from .render_execution_manager import RenderExecutionManager
@@ -149,28 +265,11 @@ class BatchRenderAPI(QObject):
             from .scene_preparation import ScenePreparation
             scene_prep = ScenePreparation()
 
-            # Create process ID
-            process_id = self._generate_process_id()
+            # Update process status and start time
+            process.status = ProcessStatus.INITIALIZING
+            process.start_time = datetime.now()
 
-            # Parse frames
-            from ..utils.frame_parser import parse_frame_range
-            frames = parse_frame_range(config.frame_range)
-
-            # Create render process
-            layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
-
-            process = RenderProcess(
-                process_id=process_id,
-                layer_name=layer_name,
-                frame_range=config.frame_range,
-                frames=frames,
-                total_frames=len(frames),
-                status=ProcessStatus.INITIALIZING,
-                render_method=config.render_method,
-                start_time=datetime.now()
-            )
-
-            self._processes[process_id] = process
+            layer_name = process.layer_name
 
             # Save temp scene
             temp_scene = scene_prep.save_temp_scene(layer_name, process_id)
@@ -218,19 +317,22 @@ class BatchRenderAPI(QObject):
 
             print(f"[BatchRenderAPI] Started render process: {process_id}")
             print(f"  Layer: {process.layer_name}")
-            print(f"  Frames: {config.frame_range} ({len(frames)} frames)")
+            print(f"  Frames: {config.frame_range} ({process.total_frames} frames)")
             print(f"  GPU: {config.gpu_id}")
             print(f"  Method: {method.value}")
 
             return True
 
         except Exception as e:
-            print(f"[BatchRenderAPI] Failed to start render: {e}")
+            import traceback
+            print(f"[BatchRenderAPI] ERROR: Failed to start render: {e}")
+            print(f"[BatchRenderAPI] Traceback:\n{traceback.format_exc()}")
 
             # Update process status
             if process_id in self._processes:
                 self._processes[process_id].status = ProcessStatus.FAILED
                 self._processes[process_id].error_message = str(e)
+                self._processes[process_id].end_time = datetime.now()
 
             return False
     
@@ -243,12 +345,22 @@ class BatchRenderAPI(QObject):
         """
         try:
             if self._process_manager is None:
+                # Still need to cancel WAITING jobs
+                for process_id, process in self._processes.items():
+                    if process.status in [ProcessStatus.WAITING, ProcessStatus.INITIALIZING]:
+                        process.status = ProcessStatus.CANCELLED
+                        process.end_time = datetime.now()
+                        print(f"[BatchRenderAPI] Cancelled queued process: {process_id}")
+
+                # Clear job queue
+                self._job_queue.clear()
                 return True
 
             for process_id, process in self._processes.items():
-                if process.status in [ProcessStatus.RENDERING, ProcessStatus.WAITING]:
-                    # Terminate process
-                    self._process_manager.terminate_process(process_id)
+                if process.status in [ProcessStatus.RENDERING, ProcessStatus.WAITING, ProcessStatus.INITIALIZING]:
+                    # Terminate process (only if actually running)
+                    if process.status == ProcessStatus.RENDERING:
+                        self._process_manager.terminate_process(process_id)
 
                     # Update status
                     process.status = ProcessStatus.CANCELLED
@@ -256,9 +368,13 @@ class BatchRenderAPI(QObject):
 
                     print(f"[BatchRenderAPI] Cancelled process: {process_id}")
 
+            # Clear job queue
+            self._job_queue.clear()
+            print(f"[BatchRenderAPI] Cleared job queue")
+
             # Stop monitoring timer if no active processes remain
             active_count = sum(1 for p in self._processes.values()
-                              if p.status in [ProcessStatus.RENDERING, ProcessStatus.PENDING])
+                              if p.status in [ProcessStatus.RENDERING, ProcessStatus.WAITING, ProcessStatus.INITIALIZING])
 
             if active_count == 0 and self._monitor_timer and self._monitor_timer.isActive():
                 self._monitor_timer.stop()
@@ -282,6 +398,10 @@ class BatchRenderAPI(QObject):
         if process_id in self._processes:
             process = self._processes[process_id]
             process.log_messages.append(message)
+
+            # Emit log signal for UI
+            if hasattr(self, 'render_log'):
+                self.render_log.emit(process_id, message)
 
             # Parse progress from log
             # Look for frame completion messages from Arnold/Redshift
@@ -449,13 +569,17 @@ class BatchRenderAPI(QObject):
             if hasattr(self, 'render_completed'):
                 self.render_completed.emit(process_id, success)
 
-        # Stop timer if no active processes
+        # CRITICAL: Process queue when jobs complete
+        if crashed_processes or any(p.status == ProcessStatus.COMPLETED for p in self._processes.values()):
+            self._process_queue()
+
+        # Stop timer if no active processes and no queue
         active_count = sum(1 for p in self._processes.values()
                           if p.status in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING, ProcessStatus.WAITING])
 
-        if active_count == 0 and self._monitor_timer and self._monitor_timer.isActive():
+        if active_count == 0 and len(self._job_queue) == 0 and self._monitor_timer and self._monitor_timer.isActive():
             self._monitor_timer.stop()
-            print("[BatchRenderAPI] Stopped process monitoring timer (no active processes)")
+            print("[BatchRenderAPI] Stopped process monitoring timer (no active processes or queue)")
 
     def cleanup(self) -> None:
         """Cleanup resources and stop all processes."""

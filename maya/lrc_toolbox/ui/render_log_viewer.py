@@ -128,21 +128,21 @@ class RenderLogViewer(QtWidgets.QDialog):
     def add_log(self, process_id: str, message: str):
         """
         Add log message for a process.
-        
+
         Args:
             process_id: Process ID
             message: Log message
         """
         if process_id not in self._process_logs:
             self.add_process(process_id)
-        
+
         # Store log
         self._process_logs[process_id].append(message)
-        
+
         # Update display if this is the current process
         if process_id == self._current_process:
             self.log_text.appendPlainText(message)
-            
+
             # Auto-scroll to bottom
             if self.auto_scroll_check.isChecked():
                 scrollbar = self.log_text.verticalScrollBar()
