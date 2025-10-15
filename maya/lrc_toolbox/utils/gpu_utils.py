@@ -14,12 +14,13 @@ from ..core.models import GPUInfo
 def detect_cuda_gpus() -> List[GPUInfo]:
     """
     Detect CUDA-compatible GPUs.
-    
+
     Uses multiple detection methods with fallback:
     1. Try pynvml (NVIDIA Management Library)
     2. Fallback to nvidia-smi command
-    3. Return empty list if no GPUs found
-    
+    3. Fallback to basic detection (assumes 1 GPU if drivers present)
+    4. Return empty list if no GPUs found
+
     Returns:
         List of GPUInfo objects for detected GPUs
     """
@@ -27,14 +28,20 @@ def detect_cuda_gpus() -> List[GPUInfo]:
     gpus = _detect_with_pynvml()
     if gpus:
         return gpus
-    
+
     # Try Method 2: nvidia-smi
     gpus = _detect_with_nvidia_smi()
     if gpus:
         return gpus
-    
+
+    # Try Method 3: Basic fallback detection
+    gpus = _detect_with_fallback()
+    if gpus:
+        return gpus
+
     # No GPUs detected
     print("[GPU] No CUDA GPUs detected")
+    print("[GPU] If you have an NVIDIA GPU, try: pip install pynvml")
     return []
 
 
@@ -102,28 +109,63 @@ def _detect_with_pynvml() -> List[GPUInfo]:
 def _detect_with_nvidia_smi() -> List[GPUInfo]:
     """
     Detect GPUs using nvidia-smi command.
-    
+
     Returns:
         List of GPUInfo objects or empty list if nvidia-smi not available
     """
     try:
-        # Run nvidia-smi to list GPUs
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free', 
-             '--format=csv,noheader,nounits'],
-            capture_output=True,
-            text=True,
-            timeout=5
+        import platform
+        import os
+
+        # Use Popen instead of run for better Maya compatibility
+        # subprocess.run() can hang in Maya on Windows
+
+        # Build command based on platform
+        if platform.system() == "Windows":
+            # On Windows with shell=True, use string command
+            cmd = 'nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader,nounits'
+            use_shell = True
+        else:
+            # On Linux, use list without shell
+            cmd = ['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free',
+                   '--format=csv,noheader,nounits']
+            use_shell = False
+
+        # Create startupinfo to hide console window on Windows
+        startupinfo = None
+        if platform.system() == "Windows":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=use_shell,
+            startupinfo=startupinfo,
+            universal_newlines=True
         )
-        
-        if result.returncode != 0:
+
+        # Wait with timeout
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()  # Clean up
+            print("[GPU] nvidia-smi timed out after 10 seconds")
             return []
-        
+
+        if process.returncode != 0:
+            print(f"[GPU] nvidia-smi failed with code {process.returncode}")
+            if stderr:
+                print(f"[GPU] Error: {stderr}")
+            return []
+
         gpus = []
-        for line in result.stdout.strip().split('\n'):
+        for line in stdout.strip().split('\n'):
             if not line.strip():
                 continue
-            
+
             try:
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 4:
@@ -131,7 +173,7 @@ def _detect_with_nvidia_smi() -> List[GPUInfo]:
                     name = parts[1]
                     memory_total = int(parts[2]) * 1024 * 1024  # Convert MB to bytes
                     memory_free = int(parts[3]) * 1024 * 1024  # Convert MB to bytes
-                    
+
                     gpu_info = GPUInfo(
                         device_id=device_id,
                         name=name,
@@ -141,21 +183,78 @@ def _detect_with_nvidia_smi() -> List[GPUInfo]:
                         compute_capability=None
                     )
                     gpus.append(gpu_info)
-                    
+
             except Exception as e:
-                print(f"[GPU] Error parsing nvidia-smi line: {e}")
+                print(f"[GPU] Error parsing nvidia-smi line '{line}': {e}")
                 continue
-        
+
         if gpus:
             print(f"[GPU] Detected {len(gpus)} GPUs using nvidia-smi")
-        
+        else:
+            print(f"[GPU] nvidia-smi returned no GPU data")
+            print(f"[GPU] Raw output: {repr(stdout[:200])}")
+
         return gpus
-        
+
     except FileNotFoundError:
         print("[GPU] nvidia-smi not found")
         return []
     except Exception as e:
         print(f"[GPU] nvidia-smi detection failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def _detect_with_fallback() -> List[GPUInfo]:
+    """
+    Fallback GPU detection when pynvml and nvidia-smi fail.
+
+    This creates a basic GPU entry if we can detect NVIDIA drivers are present.
+    Used as last resort when subprocess calls hang in Maya.
+
+    Returns:
+        List with one basic GPUInfo or empty list
+    """
+    try:
+        import platform
+
+        if platform.system() == "Windows":
+            # Try to detect NVIDIA driver through registry
+            try:
+                import winreg
+
+                # Check for NVIDIA driver in registry
+                key_path = r"SOFTWARE\NVIDIA Corporation\Global"
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                    winreg.CloseKey(key)
+
+                    # NVIDIA drivers are installed, assume 1 GPU
+                    print("[GPU] Detected NVIDIA drivers via registry, assuming 1 GPU")
+
+                    gpu_info = GPUInfo(
+                        device_id=0,
+                        name="NVIDIA GPU (detected via fallback)",
+                        memory_total=24 * 1024 * 1024 * 1024,  # Assume 24GB
+                        memory_free=20 * 1024 * 1024 * 1024,   # Assume 20GB free
+                        is_available=True,
+                        compute_capability=None
+                    )
+
+                    return [gpu_info]
+
+                except WindowsError:
+                    pass
+
+            except ImportError:
+                pass
+
+        # No fallback detection available
+        return []
+
+    except Exception as e:
+        print(f"[GPU] Fallback detection failed: {e}")
         return []
 
 
