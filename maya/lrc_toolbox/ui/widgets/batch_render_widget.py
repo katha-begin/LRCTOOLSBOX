@@ -146,11 +146,35 @@ class BatchRenderWidget(QtWidgets.QWidget):
         layout.addWidget(self.refresh_layers_btn, row, 2)
         row += 1
         
-        # Frame range
+        # Frame range with help button
         layout.addWidget(QtWidgets.QLabel("Frame Range:"), row, 0)
         self.frame_range_edit = QtWidgets.QLineEdit("1-24")
         self.frame_range_edit.setPlaceholderText("e.g., 1-24, 1,5,10, 1-100x5")
-        layout.addWidget(self.frame_range_edit, row, 1, 1, 2)
+        self.frame_range_edit.setToolTip(
+            "Frame Range Syntax:\n\n"
+            "Simple ranges:\n"
+            "  1-24        → Frames 1 to 24\n"
+            "  10-20       → Frames 10 to 20\n\n"
+            "Specific frames:\n"
+            "  1,5,10      → Only frames 1, 5, and 10\n"
+            "  1,10,20,30  → Only these frames\n\n"
+            "Steps (every Nth frame):\n"
+            "  1-24x2      → Every 2nd frame (1,3,5,...,23,24)\n"
+            "  1-100x5     → Every 5th frame (1,6,11,...,96,100)\n"
+            "  ⚠ First and last frames always included!\n\n"
+            "Combined:\n"
+            "  1-10,20-30  → Frames 1-10 and 20-30\n"
+            "  1,10-20,50  → Frame 1, frames 10-20, and frame 50\n"
+            "  1-10x2,50   → Every 2nd frame from 1-10, plus frame 50"
+        )
+        layout.addWidget(self.frame_range_edit, row, 1)
+
+        # Help button for frame range
+        frame_help_btn = QtWidgets.QPushButton("?")
+        frame_help_btn.setMaximumWidth(30)
+        frame_help_btn.setToolTip("Click for frame range syntax examples")
+        frame_help_btn.clicked.connect(self._show_frame_range_help)
+        layout.addWidget(frame_help_btn, row, 2)
         row += 1
         
         # GPU selection
@@ -374,6 +398,174 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.log_text.append("[UI] Stopped all renders")
+
+    def _show_frame_range_help(self) -> None:
+        """Show detailed help dialog for frame range syntax."""
+        help_text = """
+<h2>Frame Range Syntax Guide</h2>
+
+<h3>📋 Simple Ranges</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Input</th>
+    <th>Result</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><b>1-24</b></td>
+    <td>1, 2, 3, ..., 24</td>
+    <td>All frames from 1 to 24</td>
+  </tr>
+  <tr>
+    <td><b>10-20</b></td>
+    <td>10, 11, 12, ..., 20</td>
+    <td>All frames from 10 to 20</td>
+  </tr>
+  <tr>
+    <td><b>100-150</b></td>
+    <td>100, 101, 102, ..., 150</td>
+    <td>All frames from 100 to 150</td>
+  </tr>
+</table>
+
+<h3>🎯 Specific Frames</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Input</th>
+    <th>Result</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><b>1,5,10</b></td>
+    <td>1, 5, 10</td>
+    <td>Only these 3 frames</td>
+  </tr>
+  <tr>
+    <td><b>1,10,20,30</b></td>
+    <td>1, 10, 20, 30</td>
+    <td>Only these 4 frames</td>
+  </tr>
+  <tr>
+    <td><b>5,15,25,35,45</b></td>
+    <td>5, 15, 25, 35, 45</td>
+    <td>Every 10th frame manually</td>
+  </tr>
+</table>
+
+<h3>⚡ Steps (Every Nth Frame)</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Input</th>
+    <th>Result</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><b>1-24x2</b></td>
+    <td>1, 3, 5, 7, ..., 23, <span style="color: red;">24</span></td>
+    <td>Every 2nd frame</td>
+  </tr>
+  <tr>
+    <td><b>1-100x5</b></td>
+    <td>1, 6, 11, 16, ..., 96, <span style="color: red;">100</span></td>
+    <td>Every 5th frame</td>
+  </tr>
+  <tr>
+    <td><b>1-10x3</b></td>
+    <td>1, 4, 7, <span style="color: red;">10</span></td>
+    <td>Every 3rd frame</td>
+  </tr>
+</table>
+
+<p><b>⚠️ Important:</b> <span style="color: red;">First and last frames are ALWAYS included</span> when using steps!</p>
+
+<h3>🔀 Combined Syntax</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Input</th>
+    <th>Result</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td><b>1-10,20-30</b></td>
+    <td>1-10, 20-30</td>
+    <td>Two separate ranges</td>
+  </tr>
+  <tr>
+    <td><b>1,10-20,50</b></td>
+    <td>1, 10-20, 50</td>
+    <td>Mix of single frames and range</td>
+  </tr>
+  <tr>
+    <td><b>1-10x2,50-60</b></td>
+    <td>1,3,5,7,9,10, 50-60</td>
+    <td>Steps + range</td>
+  </tr>
+  <tr>
+    <td><b>1,5,10-20,50,60-70x2</b></td>
+    <td>Complex mix</td>
+    <td>All syntax combined</td>
+  </tr>
+</table>
+
+<h3>💡 Common Use Cases</h3>
+<table border="1" cellpadding="5">
+  <tr>
+    <th>Scenario</th>
+    <th>Frame Range</th>
+  </tr>
+  <tr>
+    <td>Full animation (120 frames)</td>
+    <td><b>1-120</b></td>
+  </tr>
+  <tr>
+    <td>Preview render (every other frame)</td>
+    <td><b>1-120x2</b></td>
+  </tr>
+  <tr>
+    <td>Fast preview (every 5th frame)</td>
+    <td><b>1-120x5</b></td>
+  </tr>
+  <tr>
+    <td>Test render (first, middle, last)</td>
+    <td><b>1,60,120</b></td>
+  </tr>
+  <tr>
+    <td>Multiple shots</td>
+    <td><b>1-24,50-74,100-124</b></td>
+  </tr>
+  <tr>
+    <td>Key frames only</td>
+    <td><b>1,12,24,36,48,60</b></td>
+  </tr>
+</table>
+
+<h3>✅ Valid Examples</h3>
+<ul>
+  <li><b>1-24</b> - Simple range</li>
+  <li><b>1-100x10</b> - Every 10th frame</li>
+  <li><b>1,5,10,15,20</b> - Specific frames</li>
+  <li><b>1-10,20-30,40-50</b> - Multiple ranges</li>
+  <li><b>1-50x5,100-150</b> - Steps + range</li>
+</ul>
+
+<h3>❌ Invalid Examples</h3>
+<ul>
+  <li><b>24-1</b> - Start must be less than end</li>
+  <li><b>1-24x0</b> - Step must be greater than 0</li>
+  <li><b>abc</b> - Must be numbers</li>
+  <li><b>1..24</b> - Use single dash, not double</li>
+</ul>
+
+<p><b>Tip:</b> Hover over the frame range field to see quick syntax reminder!</p>
+        """
+
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setWindowTitle("Frame Range Syntax Help")
+        msg_box.setTextFormat(QtCore.Qt.RichText)
+        msg_box.setText(help_text)
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg_box.setMinimumWidth(700)
+        msg_box.exec_()
 
     def _show_method_help(self) -> None:
         """Show detailed help dialog for render methods."""
