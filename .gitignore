@@ -157,6 +157,7 @@ temp/
 tmp/
 .plan/
 user_settings.json
+.augment/
 
 # LRC Toolbox specific
 .lrc_toolbox/
