@@ -298,6 +298,19 @@ class BatchRenderAPI(QObject):
                     if hasattr(self, 'render_progress'):
                         self.render_progress.emit(process_id, progress)
 
+            # Parse output path from saved file messages
+            # Redshift: "Saved file 'V:/path/to/file.exr'"
+            # Arnold: "writing file 'V:/path/to/file.exr'"
+            if not hasattr(process, 'output_path') or not process.output_path:
+                output_match = re.search(r"(?:Saved file|writing file)\s+['\"]([^'\"]+)['\"]", message, re.IGNORECASE)
+                if output_match:
+                    import os
+                    file_path = output_match.group(1)
+                    # Get directory containing the rendered file
+                    output_dir = os.path.dirname(file_path)
+                    process.output_path = output_dir
+                    print(f"[BatchRenderAPI] Detected output path: {output_dir}")
+
             # Emit log signal
             if hasattr(self, 'render_log'):
                 self.render_log.emit(process_id, message)

@@ -197,29 +197,15 @@ class RenderExecutionManager:
         except Exception as e:
             print(f"[RenderExec] Could not set project directory: {e}")
 
-        # Output directory - simplified to avoid crashes
-        # Just use images folder next to scene folder
-        try:
-            if config.layers:
-                layer_name = config.layers[0]
-                scene_dir = os.path.dirname(scene_file)
-                images_dir = os.path.join(os.path.dirname(scene_dir), "images", layer_name)
+        # DO NOT override output directory or image prefix
+        # Let render settings handle the output path
+        # The scene file already has the correct settings configured
+        # Adding -rd or -im flags will override the render settings
 
-                # Create output directory if it doesn't exist
-                os.makedirs(images_dir, exist_ok=True)
-                command.extend(["-rd", images_dir])
-                print(f"[RenderExec] Output directory: {images_dir}")
-        except Exception as e:
-            print(f"[RenderExec] Could not set output directory: {e}")
-
-        # Image name prefix
-        if config.layers:
-            layer_name = config.layers[0]
-            scene_name = os.path.splitext(os.path.basename(scene_file))[0]
-            image_prefix = f"{scene_name}_{layer_name}"
-            command.extend(["-im", image_prefix])
+        print("[RenderExec] Using output path from render settings")
 
         # Note: -v flag is NOT supported by Render.exe (causes error 204)
+        # Note: -rd and -im flags override render settings (removed)
         # Use -log flag instead if logging is needed
 
         # Scene file (must be last)

@@ -692,17 +692,14 @@ class BatchRenderWidget(QtWidgets.QWidget):
         status = "SUCCESS" if success else "FAILED"
         print(f"[Render] Completed: {process_id} - {status}")
 
-        # Get output path from process
+        # Get output path from process (parsed from render logs)
         output_path = None
         processes = self._api.get_render_status()
         for process in processes:
             if process.process_id == process_id:
-                # Get output directory from config
-                import os
-                scene_file = process.scene_file if hasattr(process, 'scene_file') else None
-                if scene_file:
-                    scene_dir = os.path.dirname(scene_file)
-                    output_path = os.path.join(scene_dir, "images", process.layer_name)
+                # Use the output path parsed from "Saved file" messages
+                if hasattr(process, 'output_path') and process.output_path:
+                    output_path = process.output_path
                 break
 
         # Add completion message to log viewer

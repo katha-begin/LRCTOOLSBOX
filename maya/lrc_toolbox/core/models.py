@@ -352,3 +352,4 @@ class RenderProcess:
     render_method: RenderMethod = RenderMethod.AUTO
     error_message: Optional[str] = None
     log_messages: List[str] = field(default_factory=list)
+    output_path: Optional[str] = None  # Parsed from render logs
