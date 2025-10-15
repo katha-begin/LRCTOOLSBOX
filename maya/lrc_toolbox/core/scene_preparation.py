@@ -105,48 +105,149 @@ class ScenePreparation:
         except Exception as e:
             print(f"[ScenePrep] Failed to get render layers from Render Setup: {e}")
             return []
+
+    def get_renderable_cameras(self) -> List[str]:
+        """
+        Get list of renderable cameras from render settings.
+
+        Returns cameras that have the 'renderable' attribute set to True.
+        These are the cameras that will be used by batch rendering.
+
+        Returns:
+            List of camera transform names that are renderable
+        """
+        if not self._maya_available:
+            return []
+
+        try:
+            cameras = []
+            all_cameras = self._cmds.ls(type='camera')
+
+            for cam in all_cameras:
+                if self._cmds.getAttr(f"{cam}.renderable"):
+                    # Get the transform node
+                    transform = self._cmds.listRelatives(cam, parent=True, type='transform')
+                    if transform:
+                        cameras.append(transform[0])
+
+            return cameras
+
+        except Exception as e:
+            print(f"[ScenePrep] Failed to get renderable cameras: {e}")
+            return []
+
+    def verify_renderable_camera(self) -> Tuple[bool, str]:
+        """
+        Verify that exactly one camera is set as renderable.
+
+        Batch rendering requires exactly one camera to be renderable.
+        Multiple or zero renderable cameras will cause issues.
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        if not self._maya_available:
+            return False, "Maya not available"
+
+        try:
+            renderable_cameras = self.get_renderable_cameras()
+
+            if len(renderable_cameras) == 0:
+                return False, "No renderable camera found. Please set a camera as renderable in render settings."
+
+            elif len(renderable_cameras) > 1:
+                cam_list = ", ".join(renderable_cameras)
+                return False, f"Multiple renderable cameras found: {cam_list}. Please set only ONE camera as renderable."
+
+            else:
+                return True, f"Renderable camera: {renderable_cameras[0]}"
+
+        except Exception as e:
+            return False, f"Failed to verify camera: {e}"
     
     def save_temp_scene(self, layer_name: str, process_id: str) -> Optional[str]:
         """
         Save current scene to temporary file for batch rendering.
-        
+
+        IMPORTANT: Preserves renderable camera settings to prevent viewport
+        camera from affecting batch rendering.
+
         Args:
             layer_name: Render layer name
             process_id: Process ID for unique filename
-            
+
         Returns:
             Path to saved temporary file or None if failed
         """
         if not self._maya_available:
             print("[ScenePrep] Cannot save scene - Maya not available")
             return None
-        
+
         try:
             # Get current scene name
             current_scene = self.get_current_scene_file()
-            
+
             if not current_scene:
                 print("[ScenePrep] No scene open to save")
                 return None
-            
+
+            # CRITICAL: Store renderable camera settings BEFORE saving
+            # This prevents viewport camera from affecting batch rendering
+            renderable_cameras = {}
+            all_cameras = self._cmds.ls(type='camera')
+            for cam in all_cameras:
+                renderable_cameras[cam] = self._cmds.getAttr(f"{cam}.renderable")
+
+            # Verify renderable camera settings
+            renderable_count = sum(1 for is_renderable in renderable_cameras.values() if is_renderable)
+
+            print(f"[ScenePrep] Checking renderable camera settings:")
+            if renderable_count == 0:
+                print(f"[ScenePrep] WARNING: No renderable camera found!")
+                print(f"[ScenePrep] Batch render may fail - please set a camera as renderable")
+            elif renderable_count > 1:
+                print(f"[ScenePrep] WARNING: Multiple renderable cameras found ({renderable_count})!")
+                print(f"[ScenePrep] Render.exe will use the first one (unpredictable)")
+
+            for cam, is_renderable in renderable_cameras.items():
+                if is_renderable:
+                    transform = self._cmds.listRelatives(cam, parent=True, type='transform')
+                    cam_name = transform[0] if transform else cam
+                    print(f"[ScenePrep]   ✓ {cam_name}: renderable=True")
+
             # Generate temp filepath (context-aware)
             temp_file = self._temp_manager.generate_temp_filepath(
                 current_scene, layer_name, process_id
             )
-            
+
             # Save scene as Maya ASCII
             self._cmds.file(rename=temp_file)
-            self._cmds.file(save=True, type='mayaAscii')
-            
+            self._cmds.file(save=True, type='mayaAscii', force=True)
+
+            # CRITICAL: Restore renderable camera settings AFTER saving
+            # Maya's file save might change viewport, but we ensure renderable
+            # camera attribute is preserved for batch rendering
+            print(f"[ScenePrep] Restoring renderable camera settings in temp file...")
+            for cam, is_renderable in renderable_cameras.items():
+                try:
+                    self._cmds.setAttr(f"{cam}.renderable", is_renderable)
+                except Exception as e:
+                    print(f"[ScenePrep] Warning: Could not restore {cam}.renderable: {e}")
+
+            # Save again to ensure camera settings are written to temp file
+            self._cmds.file(save=True, type='mayaAscii', force=True)
+
+            print(f"[ScenePrep] Renderable camera settings saved to temp file")
+
             # Restore original scene name
             self._cmds.file(rename=current_scene)
-            
+
             # Register temp file
             self._temp_manager.register_file(temp_file)
-            
+
             print(f"[ScenePrep] Saved temp scene: {os.path.basename(temp_file)}")
             return temp_file
-            
+
         except Exception as e:
             print(f"[ScenePrep] Failed to save temp scene: {e}")
             return None
@@ -154,39 +255,50 @@ class ScenePreparation:
     def validate_scene_for_render(self) -> Tuple[bool, str]:
         """
         Validate current scene is ready for rendering.
-        
+
+        Checks:
+        - Scene file is open
+        - Scene has no unsaved changes
+        - Render layers exist
+        - Exactly one camera is renderable
+
         Returns:
             Tuple of (is_valid, error_message)
         """
         if not self._maya_available:
             return False, "Maya not available"
-        
+
         try:
             # Check if scene is open
             scene_file = self.get_current_scene_file()
             if not scene_file:
                 return False, "No scene file open"
-            
+
             # Check if scene has been saved
             if self._cmds.file(query=True, modified=True):
                 return False, "Scene has unsaved changes"
-            
+
             # Check if render layers exist
             layers = self.get_render_layers()
             if not layers:
                 return False, "No render layers found in scene"
-            
+
+            # Check renderable camera
+            camera_valid, camera_msg = self.verify_renderable_camera()
+            if not camera_valid:
+                return False, camera_msg
+
             return True, ""
-            
+
         except Exception as e:
             return False, f"Validation error: {e}"
     
     def get_scene_info(self) -> dict:
         """
         Get information about current scene.
-        
+
         Returns:
-            Dictionary with scene information
+            Dictionary with scene information including renderable cameras
         """
         info = {
             "maya_available": self._maya_available,
@@ -194,34 +306,45 @@ class ScenePreparation:
             "scene_name": None,
             "has_unsaved_changes": False,
             "render_layers": [],
+            "renderable_cameras": [],
+            "camera_valid": False,
+            "camera_message": "",
             "is_valid": False,
             "error_message": ""
         }
-        
+
         if not self._maya_available:
             info["error_message"] = "Maya not available"
             return info
-        
+
         try:
             # Get scene file
             scene_file = self.get_current_scene_file()
             info["scene_file"] = scene_file
-            
+
             if scene_file:
                 info["scene_name"] = os.path.splitext(os.path.basename(scene_file))[0]
                 info["has_unsaved_changes"] = self._cmds.file(query=True, modified=True)
-            
+
             # Get render layers
             info["render_layers"] = self.get_render_layers()
-            
+
+            # Get renderable cameras
+            info["renderable_cameras"] = self.get_renderable_cameras()
+
+            # Verify camera
+            camera_valid, camera_msg = self.verify_renderable_camera()
+            info["camera_valid"] = camera_valid
+            info["camera_message"] = camera_msg
+
             # Validate
             is_valid, error_msg = self.validate_scene_for_render()
             info["is_valid"] = is_valid
             info["error_message"] = error_msg
-            
+
         except Exception as e:
             info["error_message"] = str(e)
-        
+
         return info
     
     def cleanup_temp_files(self, keep_latest: int = 5) -> int:

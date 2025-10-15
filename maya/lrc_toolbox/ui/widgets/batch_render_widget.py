@@ -361,23 +361,71 @@ class BatchRenderWidget(QtWidgets.QWidget):
         if not layer:
             QtWidgets.QMessageBox.warning(self, "Error", "Please select a render layer")
             return
-        
+
         frame_range = self.frame_range_edit.text().strip()
         if not frame_range:
             QtWidgets.QMessageBox.warning(self, "Error", "Please enter frame range")
             return
-        
+
+        # CRITICAL: Verify renderable camera before starting render
+        try:
+            import maya.cmds as cmds
+
+            # Get renderable cameras
+            renderable_cameras = []
+            all_cameras = cmds.ls(type='camera')
+            for cam in all_cameras:
+                if cmds.getAttr(f"{cam}.renderable"):
+                    transform = cmds.listRelatives(cam, parent=True, type='transform')
+                    if transform:
+                        renderable_cameras.append(transform[0])
+
+            # Check camera count
+            if len(renderable_cameras) == 0:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "No Renderable Camera",
+                    "No camera is set as renderable!\n\n"
+                    "Please set a camera as renderable:\n"
+                    "1. Select your render camera\n"
+                    "2. Open Attribute Editor\n"
+                    "3. Go to camera shape tab\n"
+                    "4. Check 'Renderable' checkbox"
+                )
+                return
+
+            elif len(renderable_cameras) > 1:
+                cam_list = "\n".join([f"  • {cam}" for cam in renderable_cameras])
+                result = QtWidgets.QMessageBox.warning(
+                    self,
+                    "Multiple Renderable Cameras",
+                    f"Multiple cameras are set as renderable:\n\n{cam_list}\n\n"
+                    f"Render.exe will use the FIRST one (unpredictable).\n\n"
+                    f"Do you want to continue anyway?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                    QtWidgets.QMessageBox.No
+                )
+                if result == QtWidgets.QMessageBox.No:
+                    return
+
+            else:
+                # Exactly one renderable camera - perfect!
+                print(f"[UI] Renderable camera: {renderable_cameras[0]}")
+
+        except Exception as e:
+            print(f"[UI] Warning: Could not verify renderable camera: {e}")
+
         # Get GPU
         gpu_id = self.gpu_combo.currentData()
         if gpu_id is None:
             gpu_id = 1
-        
+
         # Get method
         method = self.method_combo.currentData()
-        
+
         # Get renderer
         renderer = self.renderer_combo.currentText()
-        
+
         # Create config
         config = RenderConfig(
             scene_file="",  # Will be set by API
@@ -387,7 +435,7 @@ class BatchRenderWidget(QtWidgets.QWidget):
             render_method=method,
             renderer=renderer
         )
-        
+
         # Start render
         success = self._api.start_batch_render(config)
 
