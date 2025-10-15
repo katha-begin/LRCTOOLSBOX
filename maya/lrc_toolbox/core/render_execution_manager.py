@@ -158,33 +158,96 @@ class RenderExecutionManager:
                                   scene_file: str) -> List[str]:
         """
         Build Render.exe command (Priority 2).
-        
+
         Most reliable - uses Maya's native batch renderer.
+        Includes all critical flags to prevent crashes.
         """
         if not self._render_exe_path:
             raise RuntimeError("Render.exe not available")
-        
+
         command = [self._render_exe_path]
-        
+
         # Renderer
         command.extend(["-r", config.renderer])
-        
+
         # Render layer
         if config.layers:
             command.extend(["-rl", config.layers[0]])
-        
+
         # Frame range
         from ..utils.frame_parser import get_first_last_frames
         try:
             first, last = get_first_last_frames(config.frame_range)
             command.extend(["-s", str(first)])
             command.extend(["-e", str(last)])
+            command.extend(["-b", "1"])  # Frame step
         except:
             pass
-        
-        # Scene file
+
+        # Project directory (extract from scene path)
+        try:
+            import re
+            # Find project root (path up to /scene/ or /asset/)
+            match = re.search(r'(.+[/\\](?:scene|asset))[/\\]', scene_file, re.IGNORECASE)
+            if match:
+                project_root = os.path.dirname(match.group(1))  # Go up one level
+                command.extend(["-proj", project_root])
+                print(f"[RenderExec] Project directory: {project_root}")
+        except:
+            pass
+
+        # Output directory (images folder in project)
+        try:
+            if config.layers:
+                layer_name = config.layers[0]
+                # Extract context from scene path for output directory
+                import re
+                from ..utils.context_detector import context_detector
+                context = context_detector.detect_context_from_path(scene_file)
+
+                if context:
+                    from ..core.models import ProjectType
+                    if context.type == ProjectType.SHOT:
+                        # shots/Ep01/sq0010/SH0010/MASTER_BG_A
+                        output_dir = os.path.join(
+                            os.path.dirname(os.path.dirname(scene_file)),
+                            "images",
+                            context.episode,
+                            context.sequence,
+                            context.shot,
+                            layer_name
+                        )
+                    else:
+                        # assets/characters/main/hero_char/HERO_CHAR_BG_A
+                        output_dir = os.path.join(
+                            os.path.dirname(os.path.dirname(scene_file)),
+                            "images",
+                            context.category,
+                            context.subcategory,
+                            context.asset,
+                            layer_name
+                        )
+
+                    # Create output directory if it doesn't exist
+                    os.makedirs(output_dir, exist_ok=True)
+                    command.extend(["-rd", output_dir])
+                    print(f"[RenderExec] Output directory: {output_dir}")
+        except Exception as e:
+            print(f"[RenderExec] Could not set output directory: {e}")
+
+        # Image name prefix
+        if config.layers:
+            layer_name = config.layers[0]
+            scene_name = os.path.splitext(os.path.basename(scene_file))[0]
+            image_prefix = f"{scene_name}_{layer_name}"
+            command.extend(["-im", image_prefix])
+
+        # Verbosity (maximum for debugging)
+        command.extend(["-v", "5"])
+
+        # Scene file (must be last)
         command.append(scene_file)
-        
+
         return command
     
     def _build_mayapy_basic_command(self, config: RenderConfig,
@@ -238,44 +301,106 @@ class RenderExecutionManager:
         frames = parse_frame_range(config.frame_range)
         layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
 
-        # Create script content
+        # Create script content with proper error handling
         script_content = f'''# -*- coding: utf-8 -*-
-"""Custom Batch Render Script - Priority 1"""
+"""Custom Batch Render Script - Priority 1 with Error Handling"""
 
-import maya.standalone
-maya.standalone.initialize()
+import sys
+import traceback
 
-import maya.cmds as cmds
+def main():
+    """Main render function with proper error handling."""
+    try:
+        # Initialize Maya standalone with name argument
+        print("[Render] Initializing Maya standalone...")
+        import maya.standalone
+        maya.standalone.initialize(name='python')
 
-# Open scene
-print("[Render] Opening scene: {scene_file}")
-cmds.file("{scene_file}", open=True, force=True)
+        import maya.cmds as cmds
 
-# Set render layer
-print("[Render] Setting render layer: {layer_name}")
-cmds.editRenderLayerGlobals(currentRenderLayer="{layer_name}")
+        # Verify batch mode
+        is_batch = cmds.about(batch=True)
+        print(f"[Render] Batch mode: {{is_batch}}")
 
-# Set renderer
-print("[Render] Setting renderer: {config.renderer}")
-cmds.setAttr("defaultRenderGlobals.currentRenderer", "{config.renderer}", type="string")
+        # Load required plugins
+        print("[Render] Loading plugins...")
+        plugins = ['{config.renderer}']
+        for plugin in plugins:
+            try:
+                if not cmds.pluginInfo(plugin, query=True, loaded=True):
+                    cmds.loadPlugin(plugin, quiet=True)
+                    print(f"[Render] Loaded plugin: {{plugin}}")
+            except Exception as e:
+                print(f"[Render] Warning: Could not load plugin {{plugin}}: {{e}}")
 
-# Render frames
-frames = {frames}
-total_frames = len(frames)
+        # Open scene with error handling
+        print("[Render] Opening scene: {scene_file}")
+        try:
+            cmds.file("{scene_file}", open=True, force=True, ignoreVersion=True)
+            print("[Render] Scene opened successfully")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to open scene: {{e}}")
+            return 1
 
-for i, frame in enumerate(frames, 1):
-    print(f"[Render] Rendering frame {{frame}} ({{i}}/{{total_frames}})")
-    cmds.currentTime(frame)
+        # Set render layer
+        print("[Render] Setting render layer: {layer_name}")
+        try:
+            cmds.editRenderLayerGlobals(currentRenderLayer="{layer_name}")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to set render layer: {{e}}")
+            return 1
 
-    # Custom pre-render operations can be added here
+        # Set renderer
+        print("[Render] Setting renderer: {config.renderer}")
+        try:
+            cmds.setAttr("defaultRenderGlobals.currentRenderer", "{config.renderer}", type="string")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to set renderer: {{e}}")
+            return 1
 
-    # Render
-    cmds.render()
+        # Render frames
+        frames = {frames}
+        total_frames = len(frames)
+        print(f"[Render] Rendering {{total_frames}} frames: {{frames}}")
 
-    # Custom post-render operations can be added here
+        for i, frame in enumerate(frames, 1):
+            try:
+                print(f"[Render] Rendering frame {{frame}} ({{i}}/{{total_frames}})")
+                cmds.currentTime(frame)
 
-print("[Render] Render complete!")
-maya.standalone.uninitialize()
+                # Custom pre-render operations can be added here
+
+                # Render
+                cmds.render()
+
+                # Custom post-render operations can be added here
+
+                print(f"[Render] Frame {{frame}} completed")
+
+            except Exception as e:
+                print(f"[Render] ERROR: Failed to render frame {{frame}}: {{e}}")
+                traceback.print_exc()
+                return 1
+
+        print("[Render] Render complete!")
+        return 0
+
+    except Exception as e:
+        print(f"[Render] FATAL ERROR: {{e}}")
+        traceback.print_exc()
+        return 1
+
+    finally:
+        # Always uninitialize Maya
+        try:
+            print("[Render] Uninitializing Maya...")
+            maya.standalone.uninitialize()
+        except:
+            pass
+
+if __name__ == "__main__":
+    exit_code = main()
+    sys.exit(exit_code)
 '''
 
         # Save script to temp file
@@ -303,38 +428,99 @@ maya.standalone.uninitialize()
 
         layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
 
-        # Create basic script
+        # Create basic script with error handling
         script_content = f'''# -*- coding: utf-8 -*-
-"""Basic Batch Render Script - Priority 3 Fallback"""
+"""Basic Batch Render Script - Priority 3 Fallback with Error Handling"""
 
-import maya.standalone
-maya.standalone.initialize()
+import sys
+import traceback
 
-import maya.cmds as cmds
+def main():
+    """Main render function with proper error handling."""
+    try:
+        # Initialize Maya standalone
+        print("[Render] Initializing Maya standalone...")
+        import maya.standalone
+        maya.standalone.initialize(name='python')
 
-# Open scene
-print("[Render] Opening scene: {scene_file}")
-cmds.file("{scene_file}", open=True, force=True)
+        import maya.cmds as cmds
 
-# Set render layer
-print("[Render] Setting render layer: {layer_name}")
-cmds.editRenderLayerGlobals(currentRenderLayer="{layer_name}")
+        # Verify batch mode
+        is_batch = cmds.about(batch=True)
+        print(f"[Render] Batch mode: {{is_batch}}")
 
-# Set renderer
-print("[Render] Setting renderer: {config.renderer}")
-cmds.setAttr("defaultRenderGlobals.currentRenderer", "{config.renderer}", type="string")
+        # Load required plugins
+        print("[Render] Loading plugins...")
+        plugins = ['{config.renderer}']
+        for plugin in plugins:
+            try:
+                if not cmds.pluginInfo(plugin, query=True, loaded=True):
+                    cmds.loadPlugin(plugin, quiet=True)
+                    print(f"[Render] Loaded plugin: {{plugin}}")
+            except Exception as e:
+                print(f"[Render] Warning: Could not load plugin {{plugin}}: {{e}}")
 
-# Set frame range
-print("[Render] Frame range: {first}-{last}")
-cmds.setAttr("defaultRenderGlobals.startFrame", {first})
-cmds.setAttr("defaultRenderGlobals.endFrame", {last})
+        # Open scene
+        print("[Render] Opening scene: {scene_file}")
+        try:
+            cmds.file("{scene_file}", open=True, force=True, ignoreVersion=True)
+            print("[Render] Scene opened successfully")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to open scene: {{e}}")
+            return 1
 
-# Batch render
-print("[Render] Starting batch render...")
-cmds.batchRender()
+        # Set render layer
+        print("[Render] Setting render layer: {layer_name}")
+        try:
+            cmds.editRenderLayerGlobals(currentRenderLayer="{layer_name}")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to set render layer: {{e}}")
+            return 1
 
-print("[Render] Render complete!")
-maya.standalone.uninitialize()
+        # Set renderer
+        print("[Render] Setting renderer: {config.renderer}")
+        try:
+            cmds.setAttr("defaultRenderGlobals.currentRenderer", "{config.renderer}", type="string")
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to set renderer: {{e}}")
+            return 1
+
+        # Set frame range
+        print("[Render] Frame range: {first}-{last}")
+        try:
+            cmds.setAttr("defaultRenderGlobals.startFrame", {first})
+            cmds.setAttr("defaultRenderGlobals.endFrame", {last})
+        except Exception as e:
+            print(f"[Render] ERROR: Failed to set frame range: {{e}}")
+            return 1
+
+        # Batch render
+        print("[Render] Starting batch render...")
+        try:
+            cmds.batchRender()
+            print("[Render] Render complete!")
+            return 0
+        except Exception as e:
+            print(f"[Render] ERROR: Batch render failed: {{e}}")
+            traceback.print_exc()
+            return 1
+
+    except Exception as e:
+        print(f"[Render] FATAL ERROR: {{e}}")
+        traceback.print_exc()
+        return 1
+
+    finally:
+        # Always uninitialize Maya
+        try:
+            print("[Render] Uninitializing Maya...")
+            maya.standalone.uninitialize()
+        except:
+            pass
+
+if __name__ == "__main__":
+    exit_code = main()
+    sys.exit(exit_code)
 '''
 
         # Save script
