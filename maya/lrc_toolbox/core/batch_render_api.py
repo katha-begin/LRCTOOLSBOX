@@ -58,16 +58,26 @@ class BatchRenderAPI(QObject):
         """Initialize Batch Render API."""
         if QObject != object:
             super().__init__()
-        
+
         self._settings = get_batch_render_defaults()
         self._processes: Dict[str, RenderProcess] = {}
         self._system_info: Optional[SystemInfo] = None
         self._initialized = False
-        
+
         # Lazy-loaded managers (will be initialized when needed)
         self._system_detector = None
         self._execution_manager = None
         self._process_manager = None
+
+        # Process monitoring timer
+        self._monitor_timer = None
+        if Signal is not None:
+            try:
+                self._monitor_timer = QtCore.QTimer()
+                self._monitor_timer.timeout.connect(self._check_process_status)
+                self._monitor_timer.setInterval(2000)  # Check every 2 seconds
+            except:
+                pass
     
     def initialize(self) -> bool:
         """
@@ -198,6 +208,11 @@ class BatchRenderAPI(QObject):
             if hasattr(self, 'render_started'):
                 self.render_started.emit(process_id)
 
+            # Start monitoring timer if not already running
+            if self._monitor_timer and not self._monitor_timer.isActive():
+                self._monitor_timer.start()
+                print("[BatchRenderAPI] Started process monitoring timer")
+
             print(f"[BatchRenderAPI] Started render process: {process_id}")
             print(f"  Layer: {process.layer_name}")
             print(f"  Frames: {config.frame_range} ({len(frames)} frames)")
@@ -237,6 +252,14 @@ class BatchRenderAPI(QObject):
                     process.end_time = datetime.now()
 
                     print(f"[BatchRenderAPI] Cancelled process: {process_id}")
+
+            # Stop monitoring timer if no active processes remain
+            active_count = sum(1 for p in self._processes.values()
+                              if p.status in [ProcessStatus.RENDERING, ProcessStatus.PENDING])
+
+            if active_count == 0 and self._monitor_timer and self._monitor_timer.isActive():
+                self._monitor_timer.stop()
+                print("[BatchRenderAPI] Stopped process monitoring timer")
 
             return True
 
@@ -308,9 +331,78 @@ class BatchRenderAPI(QObject):
         process_num = len(self._processes) + 1
         return f"p{process_num:03d}_{timestamp}"
     
+    def _check_process_status(self) -> None:
+        """
+        Check status of all active processes (called by timer).
+
+        Detects crashed processes and updates their status.
+        """
+        if not self._process_manager:
+            return
+
+        crashed_processes = []
+
+        for process_id, process in list(self._processes.items()):
+            # Only check processes that should be running
+            if process.status not in [ProcessStatus.RENDERING, ProcessStatus.PENDING]:
+                continue
+
+            # Check if process is still running
+            is_running = self._process_manager.is_process_running(process_id)
+
+            if not is_running:
+                # Process stopped - check return code
+                return_code = self._process_manager.get_process_return_code(process_id)
+
+                if return_code is None:
+                    # Process not found - might have crashed before starting
+                    print(f"[BatchRenderAPI] Process {process_id} not found - marking as failed")
+                    process.status = ProcessStatus.FAILED
+                    process.error_message = "Process not found (crashed before starting)"
+                    process.end_time = datetime.now()
+                    crashed_processes.append((process_id, False))
+
+                elif return_code == 0:
+                    # Process completed successfully
+                    print(f"[BatchRenderAPI] Process {process_id} completed successfully")
+                    process.status = ProcessStatus.COMPLETED
+                    process.end_time = datetime.now()
+
+                    # Emit completion signal
+                    if hasattr(self, 'render_completed'):
+                        self.render_completed.emit(process_id, True)
+
+                else:
+                    # Process failed with error code
+                    print(f"[BatchRenderAPI] Process {process_id} failed with return code {return_code}")
+                    process.status = ProcessStatus.FAILED
+                    process.error_message = f"Process exited with code {return_code}"
+                    process.end_time = datetime.now()
+                    crashed_processes.append((process_id, False))
+
+                # Cleanup process resources
+                self._process_manager.cleanup_process(process_id)
+
+        # Emit signals for crashed processes
+        for process_id, success in crashed_processes:
+            if hasattr(self, 'render_completed'):
+                self.render_completed.emit(process_id, success)
+
+        # Stop timer if no active processes
+        active_count = sum(1 for p in self._processes.values()
+                          if p.status in [ProcessStatus.RENDERING, ProcessStatus.PENDING])
+
+        if active_count == 0 and self._monitor_timer and self._monitor_timer.isActive():
+            self._monitor_timer.stop()
+            print("[BatchRenderAPI] Stopped process monitoring timer (no active processes)")
+
     def cleanup(self) -> None:
         """Cleanup resources and stop all processes."""
         try:
+            # Stop monitoring timer
+            if self._monitor_timer and self._monitor_timer.isActive():
+                self._monitor_timer.stop()
+
             self.stop_all_renders()
 
             # Cleanup process manager
