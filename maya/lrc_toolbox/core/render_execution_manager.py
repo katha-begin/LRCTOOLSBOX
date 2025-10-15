@@ -33,6 +33,9 @@ class RenderExecutionManager:
         self._mayapy_path: Optional[str] = None
         self._render_exe_path: Optional[str] = None
         self._system = platform.system()
+
+        # Automatically detect executables on initialization
+        self.detect_executables()
     
     def detect_executables(self) -> Dict[str, Optional[str]]:
         """
