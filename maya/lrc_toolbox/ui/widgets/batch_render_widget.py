@@ -25,6 +25,7 @@ except ImportError:
 
 from ...core.batch_render_api import BatchRenderAPI
 from ...core.models import RenderConfig, RenderMode, RenderMethod, ProcessStatus
+from ..render_log_viewer import RenderLogViewer
 
 
 class BatchRenderWidget(QtWidgets.QWidget):
@@ -51,17 +52,20 @@ class BatchRenderWidget(QtWidgets.QWidget):
         # Initialize API
         self._api = BatchRenderAPI()
         self._api.initialize()
-        
+
+        # Log viewer dialog
+        self._log_viewer = None
+
         # Connect signals
         self._connect_api_signals()
-        
+
         # Setup UI
         self._setup_ui()
-        
+
         # Load initial data
         self._refresh_system_info()
         self._refresh_render_layers()
-        
+
         print("Batch Render Widget initialized")
     
     def _connect_api_signals(self) -> None:
@@ -261,17 +265,19 @@ class BatchRenderWidget(QtWidgets.QWidget):
         """Create log viewer section."""
         self.log_group = QtWidgets.QGroupBox("Render Logs")
         layout = QtWidgets.QVBoxLayout(self.log_group)
-        
-        self.log_text = QtWidgets.QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setFont(QtGui.QFont("Courier", 9))
-        
-        layout.addWidget(self.log_text)
-        
-        # Clear button
-        clear_btn = QtWidgets.QPushButton("Clear Logs")
-        clear_btn.clicked.connect(self.log_text.clear)
-        layout.addWidget(clear_btn)
+
+        # Info label
+        info_label = QtWidgets.QLabel(
+            "Render logs are displayed in a separate window to avoid spamming the script editor."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # Open log viewer button
+        self.open_logs_btn = QtWidgets.QPushButton("Open Log Viewer")
+        self.open_logs_btn.setMinimumHeight(40)
+        self.open_logs_btn.clicked.connect(self._open_log_viewer)
+        layout.addWidget(self.open_logs_btn)
     
     def _create_control_section(self) -> None:
         """Create control buttons section."""
@@ -344,9 +350,9 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self.layers_combo.addItems(layers)
 
         if layers:
-            self.log_text.append(f"[UI] Found {len(layers)} layers from Render Setup")
+            print(f"[UI] Found {len(layers)} layers from Render Setup")
         else:
-            self.log_text.append("[UI] No Render Setup layers found. Please create layers in Render Setup first.")
+            print("[UI] No Render Setup layers found. Please create layers in Render Setup first.")
     
     def _start_render(self) -> None:
         """Start batch render."""
@@ -384,11 +390,11 @@ class BatchRenderWidget(QtWidgets.QWidget):
         
         # Start render
         success = self._api.start_batch_render(config)
-        
+
         if success:
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            self.log_text.append(f"[UI] Started render: {layer} frames {frame_range}")
+            print(f"[UI] Started render: {layer} frames {frame_range}")
         else:
             QtWidgets.QMessageBox.critical(self, "Error", "Failed to start render")
     
@@ -397,7 +403,22 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self._api.stop_all_renders()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.log_text.append("[UI] Stopped all renders")
+        print("[UI] Stopped all renders")
+
+    def _open_log_viewer(self) -> None:
+        """Open the log viewer dialog."""
+        if not self._log_viewer:
+            self._log_viewer = RenderLogViewer(self)
+
+            # Add existing processes
+            processes = self._api.get_render_status()
+            for process in processes:
+                display_name = f"{process.layer_name} - {process.frame_range}"
+                self._log_viewer.add_process(process.process_id, display_name)
+
+        self._log_viewer.show()
+        self._log_viewer.raise_()
+        self._log_viewer.activateWindow()
 
     def _show_frame_range_help(self) -> None:
         """Show detailed help dialog for frame range syntax."""
@@ -649,28 +670,59 @@ class BatchRenderWidget(QtWidgets.QWidget):
     
     def _on_render_started(self, process_id: str) -> None:
         """Handle render started signal."""
-        self.log_text.append(f"[Render] Started: {process_id}")
+        print(f"[Render] Started: {process_id}")
+
+        # Add process to log viewer
+        if self._log_viewer:
+            processes = self._api.get_render_status()
+            for process in processes:
+                if process.process_id == process_id:
+                    display_name = f"{process.layer_name} - {process.frame_range}"
+                    self._log_viewer.add_process(process_id, display_name)
+                    break
+
         self._update_process_table()
-    
+
     def _on_render_progress(self, process_id: str, progress: float) -> None:
         """Handle render progress signal."""
         self._update_process_table()
-    
+
     def _on_render_completed(self, process_id: str, success: bool) -> None:
         """Handle render completed signal."""
         status = "SUCCESS" if success else "FAILED"
-        self.log_text.append(f"[Render] Completed: {process_id} - {status}")
+        print(f"[Render] Completed: {process_id} - {status}")
+
+        # Get output path from process
+        output_path = None
+        processes = self._api.get_render_status()
+        for process in processes:
+            if process.process_id == process_id:
+                # Get output directory from config
+                import os
+                scene_file = process.scene_file if hasattr(process, 'scene_file') else None
+                if scene_file:
+                    scene_dir = os.path.dirname(scene_file)
+                    output_path = os.path.join(scene_dir, "images", process.layer_name)
+                break
+
+        # Add completion message to log viewer
+        if self._log_viewer:
+            self._log_viewer.add_completion_message(process_id, success, output_path)
+
+        # Show output path in console
+        if success and output_path:
+            print(f"[Render] Output: {output_path}")
+
         self._update_process_table()
-        
+
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-    
+
     def _on_render_log(self, process_id: str, message: str) -> None:
         """Handle render log message."""
-        self.log_text.append(f"[{process_id}] {message}")
-        self.log_text.verticalScrollBar().setValue(
-            self.log_text.verticalScrollBar().maximum()
-        )
+        # Send to log viewer instead of script editor
+        if self._log_viewer:
+            self._log_viewer.add_log(process_id, message)
     
     def _on_system_info_updated(self, system_info) -> None:
         """Handle system info updated signal."""
