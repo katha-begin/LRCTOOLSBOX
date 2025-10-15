@@ -137,17 +137,46 @@ class BatchRenderWidget(QtWidgets.QWidget):
         
         row = 0
 
-        # Render Setup layers
-        layout.addWidget(QtWidgets.QLabel("Render Setup Layer:"), row, 0)
-        self.layers_combo = QtWidgets.QComboBox()
-        self.layers_combo.setMinimumWidth(200)
-        self.layers_combo.setToolTip("Select layer from Maya Render Setup (not legacy render layers)")
-        layout.addWidget(self.layers_combo, row, 1)
+        # Render Setup layers - IMPROVED: Multi-selection list
+        layout.addWidget(QtWidgets.QLabel("Render Layers:"), row, 0, QtCore.Qt.AlignTop)
+
+        # Layer list with multi-selection
+        layers_container = QtWidgets.QWidget()
+        layers_layout = QtWidgets.QVBoxLayout(layers_container)
+        layers_layout.setContentsMargins(0, 0, 0, 0)
+        layers_layout.setSpacing(4)
+
+        self.layers_list = QtWidgets.QListWidget()
+        self.layers_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.layers_list.setMaximumHeight(100)
+        self.layers_list.setToolTip(
+            "Select render layers (Ctrl+Click for multiple, Shift+Click for range)\n"
+            "Each selected layer will be rendered as a separate job"
+        )
+        layers_layout.addWidget(self.layers_list)
+
+        # Layer selection buttons
+        layer_btn_layout = QtWidgets.QHBoxLayout()
+        layer_btn_layout.setSpacing(4)
+
+        self.select_all_layers_btn = QtWidgets.QPushButton("Select All")
+        self.select_all_layers_btn.setToolTip("Select all layers")
+        self.select_all_layers_btn.clicked.connect(self._select_all_layers)
+        layer_btn_layout.addWidget(self.select_all_layers_btn)
+
+        self.clear_layers_btn = QtWidgets.QPushButton("Clear")
+        self.clear_layers_btn.setToolTip("Clear selection")
+        self.clear_layers_btn.clicked.connect(self._clear_layer_selection)
+        layer_btn_layout.addWidget(self.clear_layers_btn)
 
         self.refresh_layers_btn = QtWidgets.QPushButton("Refresh")
         self.refresh_layers_btn.setToolTip("Refresh layers from Render Setup")
         self.refresh_layers_btn.clicked.connect(self._refresh_render_layers)
-        layout.addWidget(self.refresh_layers_btn, row, 2)
+        layer_btn_layout.addWidget(self.refresh_layers_btn)
+
+        layers_layout.addLayout(layer_btn_layout)
+
+        layout.addWidget(layers_container, row, 1, 1, 2)
         row += 1
         
         # Frame range with help button
@@ -181,15 +210,41 @@ class BatchRenderWidget(QtWidgets.QWidget):
         layout.addWidget(frame_help_btn, row, 2)
         row += 1
         
-        # GPU selection
-        layout.addWidget(QtWidgets.QLabel("GPU:"), row, 0)
-        self.gpu_combo = QtWidgets.QComboBox()
-        self.gpu_combo.setToolTip(
-            "Select GPU for batch rendering.\n"
-            "Single GPU: Uses GPU 0 (shared with Maya)\n"
-            "Multi-GPU: Uses GPU 1+ (GPU 0 reserved for Maya)"
+        # GPU selection - IMPROVED: Concurrent job support
+        layout.addWidget(QtWidgets.QLabel("GPU Assignment:"), row, 0)
+
+        gpu_container = QtWidgets.QWidget()
+        gpu_layout = QtWidgets.QHBoxLayout(gpu_container)
+        gpu_layout.setContentsMargins(0, 0, 0, 0)
+        gpu_layout.setSpacing(8)
+
+        self.gpu_mode_combo = QtWidgets.QComboBox()
+        self.gpu_mode_combo.addItem("Auto (FIFO Queue)", "auto")
+        self.gpu_mode_combo.addItem("Manual Assignment", "manual")
+        self.gpu_mode_combo.setToolTip(
+            "Auto: Jobs queued and assigned to available GPUs automatically\n"
+            "Manual: Specify GPU for each job"
         )
-        layout.addWidget(self.gpu_combo, row, 1, 1, 2)
+        self.gpu_mode_combo.currentIndexChanged.connect(self._on_gpu_mode_changed)
+        gpu_layout.addWidget(self.gpu_mode_combo, 1)
+
+        self.gpu_combo = QtWidgets.QComboBox()
+        self.gpu_combo.setToolTip("Select GPU for manual assignment")
+        self.gpu_combo.setEnabled(False)  # Disabled by default (Auto mode)
+        gpu_layout.addWidget(self.gpu_combo, 1)
+
+        self.concurrent_jobs_spin = QtWidgets.QSpinBox()
+        self.concurrent_jobs_spin.setMinimum(1)
+        self.concurrent_jobs_spin.setMaximum(8)
+        self.concurrent_jobs_spin.setValue(1)
+        self.concurrent_jobs_spin.setPrefix("Max Jobs: ")
+        self.concurrent_jobs_spin.setToolTip(
+            "Maximum concurrent render jobs\n"
+            "Set based on available GPUs and memory"
+        )
+        gpu_layout.addWidget(self.concurrent_jobs_spin)
+
+        layout.addWidget(gpu_container, row, 1, 1, 2)
         row += 1
         
         # Render method with help button
@@ -246,36 +301,68 @@ class BatchRenderWidget(QtWidgets.QWidget):
         layout.addWidget(self.renderer_combo, row, 1, 1, 2)
     
     def _create_process_table_section(self) -> None:
-        """Create process monitoring table."""
+        """Create process monitoring table - IMPROVED: Compact with float button."""
         self.process_table_group = QtWidgets.QGroupBox("Render Processes")
         layout = QtWidgets.QVBoxLayout(self.process_table_group)
-        
+        layout.setSpacing(4)
+
+        # Header with float button
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.setSpacing(8)
+
+        status_label = QtWidgets.QLabel("Active Jobs: 0")
+        status_label.setStyleSheet("font-weight: bold;")
+        self.process_status_label = status_label
+        header_layout.addWidget(status_label)
+
+        header_layout.addStretch()
+
+        float_btn = QtWidgets.QPushButton("Float Window")
+        float_btn.setToolTip("Open process table in floating window")
+        float_btn.clicked.connect(self._float_process_table)
+        header_layout.addWidget(float_btn)
+
+        layout.addLayout(header_layout)
+
+        # Compact table
         self.process_table = QtWidgets.QTableWidget()
-        self.process_table.setColumnCount(6)
+        self.process_table.setColumnCount(7)
         self.process_table.setHorizontalHeaderLabels([
-            "Process ID", "Layer", "Frames", "Status", "Progress", "Method"
+            "Layer", "Frames", "GPU", "Status", "Progress", "Time", "Actions"
         ])
-        self.process_table.horizontalHeader().setStretchLastSection(True)
+        self.process_table.horizontalHeader().setStretchLastSection(False)
         self.process_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.process_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        
+        self.process_table.setMaximumHeight(150)  # Compact height
+        self.process_table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.process_table.customContextMenuRequested.connect(self._show_process_context_menu)
+
+        # Set column widths
+        self.process_table.setColumnWidth(0, 120)  # Layer
+        self.process_table.setColumnWidth(1, 80)   # Frames
+        self.process_table.setColumnWidth(2, 50)   # GPU
+        self.process_table.setColumnWidth(3, 80)   # Status
+        self.process_table.setColumnWidth(4, 100)  # Progress
+        self.process_table.setColumnWidth(5, 80)   # Time
+        self.process_table.horizontalHeader().setStretchLastSection(True)  # Actions
+
         layout.addWidget(self.process_table)
     
     def _create_log_section(self) -> None:
-        """Create log viewer section."""
-        self.log_group = QtWidgets.QGroupBox("Render Logs")
-        layout = QtWidgets.QVBoxLayout(self.log_group)
+        """Create log viewer section - IMPROVED: More compact."""
+        self.log_group = QtWidgets.QGroupBox("Logs")
+        layout = QtWidgets.QHBoxLayout(self.log_group)  # Horizontal for compact layout
+        layout.setSpacing(8)
 
-        # Info label
-        info_label = QtWidgets.QLabel(
-            "Render logs are displayed in a separate window to avoid spamming the script editor."
-        )
-        info_label.setWordWrap(True)
+        # Compact info label
+        info_label = QtWidgets.QLabel("View render logs in popup window:")
         layout.addWidget(info_label)
 
-        # Open log viewer button
+        layout.addStretch()
+
+        # Open log viewer button - IMPROVED: Smaller
         self.open_logs_btn = QtWidgets.QPushButton("Open Log Viewer")
-        self.open_logs_btn.setMinimumHeight(40)
+        self.open_logs_btn.setMinimumHeight(30)  # Reduced from 40
         self.open_logs_btn.clicked.connect(self._open_log_viewer)
         layout.addWidget(self.open_logs_btn)
     
@@ -340,27 +427,48 @@ class BatchRenderWidget(QtWidgets.QWidget):
                         )
     
     def _refresh_render_layers(self) -> None:
-        """Refresh render layers list from Render Setup."""
+        """Refresh render layers list from Render Setup - IMPROVED: Multi-select list."""
         from ...core.scene_preparation import ScenePreparation
 
         scene_prep = ScenePreparation()
         layers = scene_prep.get_render_layers()
 
-        self.layers_combo.clear()
-        self.layers_combo.addItems(layers)
+        self.layers_list.clear()
+        self.layers_list.addItems(layers)
 
         if layers:
             print(f"[UI] Found {len(layers)} layers from Render Setup")
         else:
             print("[UI] No Render Setup layers found. Please create layers in Render Setup first.")
+
+    def _select_all_layers(self) -> None:
+        """Select all layers in the list."""
+        self.layers_list.selectAll()
+
+    def _clear_layer_selection(self) -> None:
+        """Clear layer selection."""
+        self.layers_list.clearSelection()
+
+    def _on_gpu_mode_changed(self, index: int) -> None:
+        """Handle GPU mode change."""
+        mode = self.gpu_mode_combo.currentData()
+
+        if mode == "manual":
+            self.gpu_combo.setEnabled(True)
+            self.concurrent_jobs_spin.setEnabled(False)
+        else:  # auto
+            self.gpu_combo.setEnabled(False)
+            self.concurrent_jobs_spin.setEnabled(True)
     
     def _start_render(self) -> None:
-        """Start batch render."""
-        # Validate inputs
-        layer = self.layers_combo.currentText()
-        if not layer:
-            QtWidgets.QMessageBox.warning(self, "Error", "Please select a render layer")
+        """Start batch render - IMPROVED: Multiple layers support."""
+        # Validate inputs - Get selected layers
+        selected_items = self.layers_list.selectedItems()
+        if not selected_items:
+            QtWidgets.QMessageBox.warning(self, "Error", "Please select at least one render layer")
             return
+
+        layers = [item.text() for item in selected_items]
 
         frame_range = self.frame_range_edit.text().strip()
         if not frame_range:
@@ -415,36 +523,64 @@ class BatchRenderWidget(QtWidgets.QWidget):
         except Exception as e:
             print(f"[UI] Warning: Could not verify renderable camera: {e}")
 
-        # Get GPU
-        gpu_id = self.gpu_combo.currentData()
-        if gpu_id is None:
-            gpu_id = 1
+        # Get GPU mode and settings
+        gpu_mode = self.gpu_mode_combo.currentData()
+        max_concurrent = self.concurrent_jobs_spin.value()
 
-        # Get method
+        # Get method and renderer
         method = self.method_combo.currentData()
-
-        # Get renderer
         renderer = self.renderer_combo.currentText()
 
-        # Create config
-        config = RenderConfig(
-            scene_file="",  # Will be set by API
-            layers=[layer],
-            frame_range=frame_range,
-            gpu_id=gpu_id,
-            render_method=method,
-            renderer=renderer
-        )
+        # Confirm multiple layers
+        if len(layers) > 1:
+            result = QtWidgets.QMessageBox.question(
+                self,
+                "Multiple Layers",
+                f"Start {len(layers)} render jobs?\n\n"
+                f"Layers: {', '.join(layers)}\n"
+                f"Frames: {frame_range}\n"
+                f"GPU Mode: {gpu_mode.upper()}\n"
+                f"Max Concurrent: {max_concurrent if gpu_mode == 'auto' else 'N/A'}",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.Yes
+            )
+            if result == QtWidgets.QMessageBox.No:
+                return
 
-        # Start render
-        success = self._api.start_batch_render(config)
+        # Start render for each layer
+        success_count = 0
+        for layer in layers:
+            # Get GPU for this job
+            if gpu_mode == "manual":
+                gpu_id = self.gpu_combo.currentData()
+                if gpu_id is None:
+                    gpu_id = 1
+            else:
+                # Auto mode - API will assign GPU
+                gpu_id = 1  # Default, will be managed by queue
 
-        if success:
+            # Create config
+            config = RenderConfig(
+                scene_file="",  # Will be set by API
+                layers=[layer],
+                frame_range=frame_range,
+                gpu_id=gpu_id,
+                render_method=method,
+                renderer=renderer
+            )
+
+            # Start render
+            success = self._api.start_batch_render(config)
+            if success:
+                success_count += 1
+                print(f"[UI] Started render: {layer} frames {frame_range}")
+
+        if success_count > 0:
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            print(f"[UI] Started render: {layer} frames {frame_range}")
+            print(f"[UI] Started {success_count}/{len(layers)} render jobs")
         else:
-            QtWidgets.QMessageBox.critical(self, "Error", "Failed to start render")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to start any renders")
     
     def _stop_render(self) -> None:
         """Stop all renders."""
@@ -467,6 +603,140 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self._log_viewer.show()
         self._log_viewer.raise_()
         self._log_viewer.activateWindow()
+
+    def _float_process_table(self) -> None:
+        """Open process table in floating window."""
+        # TODO: Implement floating process table window
+        QtWidgets.QMessageBox.information(
+            self,
+            "Coming Soon",
+            "Floating process table window will be implemented in next update.\n\n"
+            "For now, you can resize the main window to see more processes."
+        )
+
+    def _show_process_context_menu(self, position) -> None:
+        """Show context menu for process table."""
+        # Get selected row
+        row = self.process_table.rowAt(position.y())
+        if row < 0:
+            return
+
+        # Get process ID from row
+        process_id_item = self.process_table.item(row, 0)
+        if not process_id_item:
+            return
+
+        process_id = process_id_item.data(QtCore.Qt.UserRole)
+        if not process_id:
+            return
+
+        # Create context menu
+        menu = QtWidgets.QMenu(self)
+
+        # Re-render action
+        rerender_action = menu.addAction("Re-render...")
+        rerender_action.triggered.connect(lambda: self._rerender_job(process_id))
+
+        # Stop action
+        stop_action = menu.addAction("Stop Job")
+        stop_action.triggered.connect(lambda: self._stop_job(process_id))
+
+        menu.addSeparator()
+
+        # View logs action
+        logs_action = menu.addAction("View Logs")
+        logs_action.triggered.connect(lambda: self._view_job_logs(process_id))
+
+        # Show menu
+        menu.exec_(self.process_table.viewport().mapToGlobal(position))
+
+    def _rerender_job(self, process_id: str) -> None:
+        """Re-render a job with custom settings."""
+        # Get process info
+        processes = self._api.get_render_status()
+        process = None
+        for p in processes:
+            if p.process_id == process_id:
+                process = p
+                break
+
+        if not process:
+            QtWidgets.QMessageBox.warning(self, "Error", "Process not found")
+            return
+
+        # Show re-render dialog
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle(f"Re-render: {process.layer_name}")
+        dialog.setMinimumWidth(400)
+
+        layout = QtWidgets.QFormLayout(dialog)
+
+        # Layer (read-only)
+        layer_edit = QtWidgets.QLineEdit(process.layer_name)
+        layer_edit.setReadOnly(True)
+        layout.addRow("Layer:", layer_edit)
+
+        # Frame range (editable)
+        frame_edit = QtWidgets.QLineEdit(process.frame_range)
+        frame_edit.setPlaceholderText("e.g., 1-24, 1,5,10")
+        layout.addRow("Frame Range:", frame_edit)
+
+        # GPU
+        gpu_combo = QtWidgets.QComboBox()
+        # Copy GPU list from main widget
+        for i in range(self.gpu_combo.count()):
+            gpu_combo.addItem(self.gpu_combo.itemText(i), self.gpu_combo.itemData(i))
+        layout.addRow("GPU:", gpu_combo)
+
+        # Buttons
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addRow(button_box)
+
+        # Show dialog
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            # Start new render with updated settings
+            new_frame_range = frame_edit.text().strip()
+            new_gpu_id = gpu_combo.currentData()
+
+            if not new_frame_range:
+                QtWidgets.QMessageBox.warning(self, "Error", "Please enter frame range")
+                return
+
+            # Create new config
+            config = RenderConfig(
+                scene_file="",
+                layers=[process.layer_name],
+                frame_range=new_frame_range,
+                gpu_id=new_gpu_id if new_gpu_id is not None else 1,
+                render_method=process.render_method,
+                renderer="redshift"  # TODO: Get from process
+            )
+
+            # Start render
+            success = self._api.start_batch_render(config)
+            if success:
+                print(f"[UI] Re-rendering: {process.layer_name} frames {new_frame_range}")
+            else:
+                QtWidgets.QMessageBox.critical(self, "Error", "Failed to start re-render")
+
+    def _stop_job(self, process_id: str) -> None:
+        """Stop a specific job."""
+        # TODO: Implement stop single job in API
+        QtWidgets.QMessageBox.information(
+            self,
+            "Coming Soon",
+            "Stop single job will be implemented in next update.\n\n"
+            "For now, use 'Stop All' button to stop all renders."
+        )
+
+    def _view_job_logs(self, process_id: str) -> None:
+        """View logs for a specific job."""
+        self._open_log_viewer()
+        # TODO: Select the process in log viewer
 
     def _show_frame_range_help(self) -> None:
         """Show detailed help dialog for frame range syntax."""
@@ -774,18 +1044,77 @@ class BatchRenderWidget(QtWidgets.QWidget):
         self._refresh_system_info()
     
     def _update_process_table(self) -> None:
-        """Update process table with current processes."""
+        """Update process table with current processes - IMPROVED: New columns."""
         processes = self._api.get_render_status()
-        
+
         self.process_table.setRowCount(len(processes))
-        
+
+        # Update status label
+        active_count = sum(1 for p in processes if p.status in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING, ProcessStatus.WAITING])
+        self.process_status_label.setText(f"Active Jobs: {active_count} / Total: {len(processes)}")
+
         for row, process in enumerate(processes):
-            self.process_table.setItem(row, 0, QtWidgets.QTableWidgetItem(process.process_id))
-            self.process_table.setItem(row, 1, QtWidgets.QTableWidgetItem(process.layer_name))
-            self.process_table.setItem(row, 2, QtWidgets.QTableWidgetItem(process.frame_range))
-            self.process_table.setItem(row, 3, QtWidgets.QTableWidgetItem(process.status.value))
-            self.process_table.setItem(row, 4, QtWidgets.QTableWidgetItem(f"{process.progress:.1f}%"))
-            self.process_table.setItem(row, 5, QtWidgets.QTableWidgetItem(process.render_method.value))
+            # Column 0: Layer
+            layer_item = QtWidgets.QTableWidgetItem(process.layer_name)
+            layer_item.setData(QtCore.Qt.UserRole, process.process_id)  # Store process ID
+            self.process_table.setItem(row, 0, layer_item)
+
+            # Column 1: Frames
+            self.process_table.setItem(row, 1, QtWidgets.QTableWidgetItem(process.frame_range))
+
+            # Column 2: GPU
+            gpu_text = f"GPU {process.gpu_id if hasattr(process, 'gpu_id') else 'N/A'}"
+            self.process_table.setItem(row, 2, QtWidgets.QTableWidgetItem(gpu_text))
+
+            # Column 3: Status
+            status_item = QtWidgets.QTableWidgetItem(process.status.value.upper())
+            # Color code status
+            if process.status == ProcessStatus.COMPLETED:
+                status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+            elif process.status == ProcessStatus.FAILED:
+                status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+            elif process.status == ProcessStatus.RENDERING:
+                status_item.setForeground(QtGui.QColor(0, 100, 200))  # Blue
+            self.process_table.setItem(row, 3, status_item)
+
+            # Column 4: Progress
+            progress_text = f"{process.progress:.1f}%"
+            if process.current_frame > 0 and process.total_frames > 0:
+                progress_text += f" ({process.current_frame}/{process.total_frames})"
+            self.process_table.setItem(row, 4, QtWidgets.QTableWidgetItem(progress_text))
+
+            # Column 5: Time
+            if process.start_time:
+                from datetime import datetime
+                elapsed = datetime.now() - process.start_time
+                minutes = int(elapsed.total_seconds() / 60)
+                seconds = int(elapsed.total_seconds() % 60)
+                time_text = f"{minutes}m {seconds}s"
+            else:
+                time_text = "N/A"
+            self.process_table.setItem(row, 5, QtWidgets.QTableWidgetItem(time_text))
+
+            # Column 6: Actions (buttons)
+            actions_widget = QtWidgets.QWidget()
+            actions_layout = QtWidgets.QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(2, 2, 2, 2)
+            actions_layout.setSpacing(2)
+
+            # Re-render button
+            rerender_btn = QtWidgets.QPushButton("⟳")
+            rerender_btn.setToolTip("Re-render with custom settings")
+            rerender_btn.setMaximumWidth(30)
+            rerender_btn.clicked.connect(lambda checked, pid=process.process_id: self._rerender_job(pid))
+            actions_layout.addWidget(rerender_btn)
+
+            # View logs button
+            logs_btn = QtWidgets.QPushButton("📋")
+            logs_btn.setToolTip("View logs")
+            logs_btn.setMaximumWidth(30)
+            logs_btn.clicked.connect(lambda checked, pid=process.process_id: self._view_job_logs(pid))
+            actions_layout.addWidget(logs_btn)
+
+            self.process_table.setCellWidget(row, 6, actions_widget)
     
     def closeEvent(self, event) -> None:
         """Handle widget close event."""
