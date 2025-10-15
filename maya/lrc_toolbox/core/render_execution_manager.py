@@ -219,8 +219,8 @@ class RenderExecutionManager:
             image_prefix = f"{scene_name}_{layer_name}"
             command.extend(["-im", image_prefix])
 
-        # Verbosity (maximum for debugging)
-        command.extend(["-v", "5"])
+        # Note: -v flag is NOT supported by Render.exe (causes error 204)
+        # Use -log flag instead if logging is needed
 
         # Scene file (must be last)
         command.append(scene_file)
