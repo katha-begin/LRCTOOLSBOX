@@ -179,6 +179,9 @@ class BatchRenderAPI(QObject):
 
             process.temp_file_path = temp_scene
 
+            # Store original scene file for output path calculation
+            process.scene_file = config.scene_file
+
             # Select render method
             method = self._execution_manager.select_render_method(config.render_method)
             process.render_method = method

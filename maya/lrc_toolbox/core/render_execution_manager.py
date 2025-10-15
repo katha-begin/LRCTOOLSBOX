@@ -197,16 +197,28 @@ class RenderExecutionManager:
         except Exception as e:
             print(f"[RenderExec] Could not set project directory: {e}")
 
-        # DO NOT override output directory or image prefix
-        # Let render settings handle the output path
-        # The scene file already has the correct settings configured
-        # Adding -rd or -im flags will override the render settings
+        # IMPORTANT: We MUST override output directory because:
+        # 1. We're using a temp scene file in .tmp directory
+        # 2. Relative paths in render settings will output to .tmp/images/
+        # 3. We need to output to the ORIGINAL scene's publish directory
 
-        print("[RenderExec] Using output path from render settings")
+        # Get the ORIGINAL scene file path (not the temp file)
+        original_scene = config.scene_file
+
+        # Get output directory from render settings
+        from ..utils.render_settings import get_output_directory
+        layer_name = config.layers[0] if config.layers else "defaultRenderLayer"
+
+        try:
+            output_dir = get_output_directory(original_scene, layer_name)
+            command.extend(["-rd", output_dir])
+            print(f"[RenderExec] Output directory: {output_dir}")
+        except Exception as e:
+            print(f"[RenderExec] Warning: Could not set output directory: {e}")
+            print("[RenderExec] Using render settings default (may output to .tmp)")
 
         # Note: -v flag is NOT supported by Render.exe (causes error 204)
-        # Note: -rd and -im flags override render settings (removed)
-        # Use -log flag instead if logging is needed
+        # Note: -im flag not used - let render settings handle image prefix
 
         # Scene file (must be last)
         command.append(scene_file)

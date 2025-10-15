@@ -349,6 +349,7 @@ class RenderProcess:
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     temp_file_path: Optional[str] = None
+    scene_file: Optional[str] = None  # Original scene file (not temp)
     render_method: RenderMethod = RenderMethod.AUTO
     error_message: Optional[str] = None
     log_messages: List[str] = field(default_factory=list)
