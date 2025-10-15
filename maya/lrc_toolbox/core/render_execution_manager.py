@@ -3,8 +3,8 @@
 Render Execution Manager
 
 Three-level fallback system for batch rendering:
-Priority 1: mayapy with custom script (most flexible)
-Priority 2: Maya Render.exe (most reliable)
+Priority 1: Maya Render.exe (most stable and reliable)
+Priority 2: mayapy with custom script (flexible but can crash)
 Priority 3: mayapy with basic render (fallback)
 """
 
@@ -20,10 +20,10 @@ from .system_detector import SystemDetector
 class RenderExecutionManager:
     """
     Manages render execution with automatic fallback system.
-    
+
     Three-level priority system:
-    1. MAYAPY_CUSTOM: mayapy + custom script (most flexible)
-    2. RENDER_EXE: Maya Render.exe (most reliable)
+    1. RENDER_EXE: Maya Render.exe (most stable and reliable)
+    2. MAYAPY_CUSTOM: mayapy + custom script (flexible but can crash)
     3. MAYAPY_BASIC: mayapy + basic render (fallback)
     """
     
@@ -90,17 +90,17 @@ class RenderExecutionManager:
         
         # AUTO mode: use priority order
         if preferred == RenderMethod.AUTO:
-            # Priority 1: MAYAPY_CUSTOM
-            if RenderMethod.MAYAPY_CUSTOM in available:
-                print("[RenderExec] Selected: MAYAPY_CUSTOM (Priority 1)")
-                return RenderMethod.MAYAPY_CUSTOM
-            
-            # Priority 2: RENDER_EXE
+            # Priority 1: RENDER_EXE (most stable, native Maya batch renderer)
             if RenderMethod.RENDER_EXE in available:
-                print("[RenderExec] Selected: RENDER_EXE (Priority 2)")
+                print("[RenderExec] Selected: RENDER_EXE (Priority 1 - Most Stable)")
                 return RenderMethod.RENDER_EXE
-            
-            # Priority 3: MAYAPY_BASIC
+
+            # Priority 2: MAYAPY_CUSTOM (flexible but can crash)
+            if RenderMethod.MAYAPY_CUSTOM in available:
+                print("[RenderExec] Selected: MAYAPY_CUSTOM (Priority 2)")
+                return RenderMethod.MAYAPY_CUSTOM
+
+            # Priority 3: MAYAPY_BASIC (fallback)
             if RenderMethod.MAYAPY_BASIC in available:
                 print("[RenderExec] Selected: MAYAPY_BASIC (Priority 3)")
                 return RenderMethod.MAYAPY_BASIC
