@@ -280,10 +280,25 @@ class BatchRenderAPI(QObject):
             process = self._processes[process_id]
             process.log_messages.append(message)
 
-            # Parse progress from log (if available)
-            # This is renderer-specific, can be enhanced later
+            # Parse progress from log
+            # Look for frame completion messages from Arnold/Redshift
+            import re
 
-            # Emit signal
+            # Arnold: "Rendering frame 5 of 10"
+            # Redshift: "Rendering layer 'layer_name', frame 5 (5/10)"
+            frame_match = re.search(r'frame\s+(\d+).*?[(/](\d+)[)/]', message, re.IGNORECASE)
+            if frame_match:
+                current_frame = int(frame_match.group(1))
+                total_frames = int(frame_match.group(2))
+                if total_frames > 0:
+                    progress = (current_frame / total_frames) * 100.0
+                    process.progress = progress
+
+                    # Emit progress signal
+                    if hasattr(self, 'render_progress'):
+                        self.render_progress.emit(process_id, progress)
+
+            # Emit log signal
             if hasattr(self, 'render_log'):
                 self.render_log.emit(process_id, message)
     
@@ -344,7 +359,7 @@ class BatchRenderAPI(QObject):
 
         for process_id, process in list(self._processes.items()):
             # Only check processes that should be running
-            if process.status not in [ProcessStatus.RENDERING, ProcessStatus.PENDING]:
+            if process.status not in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING, ProcessStatus.WAITING]:
                 continue
 
             # Check if process is still running
@@ -366,9 +381,12 @@ class BatchRenderAPI(QObject):
                     # Process completed successfully
                     print(f"[BatchRenderAPI] Process {process_id} completed successfully")
                     process.status = ProcessStatus.COMPLETED
+                    process.progress = 100.0
                     process.end_time = datetime.now()
 
-                    # Emit completion signal
+                    # Emit progress and completion signals
+                    if hasattr(self, 'render_progress'):
+                        self.render_progress.emit(process_id, 100.0)
                     if hasattr(self, 'render_completed'):
                         self.render_completed.emit(process_id, True)
 
