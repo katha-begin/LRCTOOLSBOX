@@ -289,17 +289,32 @@ class BatchRenderAPI(QObject):
 
             # Arnold: "Rendering frame 5 of 10"
             # Redshift: "Rendering layer 'layer_name', frame 5 (5/10)"
+            # Note: Redshift outputs multiple lines per frame (for each AOV/tile)
+            # We need to track unique frames to avoid counting duplicates
             frame_match = re.search(r'frame\s+(\d+).*?[(/](\d+)[)/]', message, re.IGNORECASE)
             if frame_match:
                 current_frame = int(frame_match.group(1))
                 total_frames = int(frame_match.group(2))
-                if total_frames > 0:
-                    progress = (current_frame / total_frames) * 100.0
-                    process.progress = progress
 
-                    # Emit progress signal
-                    if hasattr(self, 'render_progress'):
-                        self.render_progress.emit(process_id, progress)
+                # Store total frames if not set
+                if process.total_frames == 0:
+                    process.total_frames = total_frames
+
+                # Update current frame (track highest frame seen)
+                if current_frame > process.current_frame:
+                    process.current_frame = current_frame
+
+                    # Calculate progress (cap at 100%)
+                    if total_frames > 0:
+                        progress = min(100.0, (current_frame / total_frames) * 100.0)
+
+                        # Only update if progress increased
+                        if progress > process.progress:
+                            process.progress = progress
+
+                            # Emit progress signal
+                            if hasattr(self, 'render_progress'):
+                                self.render_progress.emit(process_id, progress)
 
             # Parse output path from saved file messages
             # Redshift: "Saved file 'V:/path/to/file.exr'"
@@ -313,6 +328,18 @@ class BatchRenderAPI(QObject):
                     output_dir = os.path.dirname(file_path)
                     process.output_path = output_dir
                     print(f"[BatchRenderAPI] Detected output path: {output_dir}")
+
+            # Detect render completion messages
+            # Redshift: "Render complete"
+            # Arnold: "render done"
+            if re.search(r'render\s+(complete|done|finished)', message, re.IGNORECASE):
+                print(f"[BatchRenderAPI] Detected render completion message for {process_id}")
+                # Don't set status here - let process monitoring handle it
+                # Just ensure progress is at 100%
+                if process.progress < 100.0:
+                    process.progress = 100.0
+                    if hasattr(self, 'render_progress'):
+                        self.render_progress.emit(process_id, 100.0)
 
             # Emit log signal
             if hasattr(self, 'render_log'):
@@ -424,7 +451,7 @@ class BatchRenderAPI(QObject):
 
         # Stop timer if no active processes
         active_count = sum(1 for p in self._processes.values()
-                          if p.status in [ProcessStatus.RENDERING, ProcessStatus.PENDING])
+                          if p.status in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING, ProcessStatus.WAITING])
 
         if active_count == 0 and self._monitor_timer and self._monitor_timer.isActive():
             self._monitor_timer.stop()
