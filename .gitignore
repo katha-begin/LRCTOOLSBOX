@@ -169,7 +169,7 @@ maya/lrc_toolbox/tests/test_*.py
 maya/lrc_toolbox/tests/debug_*.py
 maya/lrc_toolbox/docs/*_RESEARCH.md
 maya/lrc_toolbox/docs/*_DEBUG.md
-BATCH_RENDER_COMPLETE.md
+BATCH_*
 
 # Cache and temporary files
 *.pyc
