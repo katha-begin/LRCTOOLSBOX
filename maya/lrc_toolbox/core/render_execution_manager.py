@@ -178,9 +178,25 @@ class RenderExecutionManager:
             command.extend(["-rl", config.layers[0]])
 
         # Frame range
-        from ..utils.frame_parser import get_first_last_frames
+        # CRITICAL: Render.exe only supports start/end/step, NOT comma-separated frames
+        # For non-sequential frames (e.g., "1001,1010"), we use first and last
+        # This will render ALL frames in between, which is WRONG for comma-separated frames
+        # TODO: For comma-separated frames, should submit multiple render jobs
+        from ..utils.frame_parser import get_first_last_frames, parse_frame_range
         try:
-            first, last = get_first_last_frames(config.frame_range)
+            frames = parse_frame_range(config.frame_range)
+            first = frames[0]
+            last = frames[-1]
+
+            # Check if frames are sequential
+            is_sequential = all(frames[i] == frames[i-1] + 1 for i in range(1, len(frames)))
+
+            if not is_sequential and len(frames) > 1:
+                # Non-sequential frames - warn user
+                print(f"[RenderExec] WARNING: Non-sequential frames detected: {config.frame_range}")
+                print(f"[RenderExec] WARNING: Render.exe will render ALL frames from {first} to {last}")
+                print(f"[RenderExec] WARNING: To render specific frames only, submit separate jobs")
+
             command.extend(["-s", str(first)])
             command.extend(["-e", str(last)])
             command.extend(["-b", "1"])  # Frame step

@@ -345,7 +345,8 @@ class RenderProcess:
     frames: List[int] = field(default_factory=list)
     status: ProcessStatus = ProcessStatus.WAITING
     progress: float = 0.0
-    current_frame: int = 0
+    current_frame: int = 0  # Current frame NUMBER (e.g., 1001)
+    completed_frames: int = 0  # Number of frames completed (e.g., 1 of 10)
     total_frames: int = 0
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None

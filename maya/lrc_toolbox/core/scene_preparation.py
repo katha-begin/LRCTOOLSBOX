@@ -220,32 +220,39 @@ class ScenePreparation:
                 current_scene, layer_name, process_id
             )
 
-            # Save scene as Maya ASCII
-            self._cmds.file(rename=temp_file)
-            self._cmds.file(save=True, type='mayaAscii', force=True)
+            # CRITICAL: Simple 3-step process that doesn't affect current session:
+            # 1. Save current session (if modified)
+            # 2. Copy saved file to /tmp
+            # 3. Render from /tmp file
 
-            # CRITICAL: Restore renderable camera settings AFTER saving
-            # Maya's file save might change viewport, but we ensure renderable
-            # camera attribute is preserved for batch rendering
-            print(f"[ScenePrep] Restoring renderable camera settings in temp file...")
-            for cam, is_renderable in renderable_cameras.items():
-                try:
-                    self._cmds.setAttr(f"{cam}.renderable", is_renderable)
-                except Exception as e:
-                    print(f"[ScenePrep] Warning: Could not restore {cam}.renderable: {e}")
+            print(f"[ScenePrep] Preparing temp scene file...")
 
-            # Save again to ensure camera settings are written to temp file
-            self._cmds.file(save=True, type='mayaAscii', force=True)
+            # Step 1: Save current scene if modified (preserves everything)
+            if self._cmds.file(query=True, modified=True):
+                print(f"[ScenePrep] Saving current scene (has unsaved changes)...")
+                self._cmds.file(save=True, force=True)
+                print(f"[ScenePrep] Current scene saved")
+            else:
+                print(f"[ScenePrep] Current scene already saved (no changes)")
 
-            print(f"[ScenePrep] Renderable camera settings saved to temp file")
+            # Step 2: Copy current scene file to temp location
+            # This is a simple file system operation - no Maya commands involved!
+            print(f"[ScenePrep] Copying scene to temp location...")
+            import shutil
+            try:
+                shutil.copy2(current_scene, temp_file)
+                print(f"[ScenePrep] Scene copied to: {os.path.basename(temp_file)}")
+            except Exception as e:
+                print(f"[ScenePrep] ERROR: Failed to copy scene file: {e}")
+                return None
 
-            # Restore original scene name
-            self._cmds.file(rename=current_scene)
+            # Step 3: Render will use the temp file (happens in separate process)
+            # Current Maya session is completely unaffected!
 
-            # Register temp file
+            # Register temp file for cleanup
             self._temp_manager.register_file(temp_file)
 
-            print(f"[ScenePrep] Saved temp scene: {os.path.basename(temp_file)}")
+            print(f"[ScenePrep] Temp scene ready: {os.path.basename(temp_file)}")
             return temp_file
 
         except Exception as e:

@@ -6,10 +6,21 @@
 
 **Location**: `Documents\maya\2022\Maya.env` (adjust for your Maya version)
 
-**Add these lines to Maya.env:**
+**Add these lines to Maya.env (replace with your actual path):**
 ```bash
+PYTHONPATH=<YOUR_PATH_TO_TOOLBOX>\maya;$PYTHONPATH
+MAYA_PLUG_IN_PATH=<YOUR_PATH_TO_TOOLBOX>\maya\plugins;$MAYA_PLUG_IN_PATH
+```
+
+**Examples:**
+```bash
+# Development environment:
 PYTHONPATH=E:\dev\LRCtoolsbox\LRCtoolsbox\maya;$PYTHONPATH
 MAYA_PLUG_IN_PATH=E:\dev\LRCtoolsbox\LRCtoolsbox\maya\plugins;$MAYA_PLUG_IN_PATH
+
+# Production environment (example):
+PYTHONPATH=V:\SWA\tools\maya\lrc_toolbox\maya;$PYTHONPATH
+MAYA_PLUG_IN_PATH=V:\SWA\tools\maya\lrc_toolbox\maya\plugins;$MAYA_PLUG_IN_PATH
 ```
 
 ### **Step 2: Restart Maya**
@@ -28,20 +39,25 @@ MAYA_PLUG_IN_PATH=E:\dev\LRCtoolsbox\LRCtoolsbox\maya\plugins;$MAYA_PLUG_IN_PATH
 ## 🔧 **File Structure (Clean)**
 
 ```
-E:\dev\LRCtoolsbox\LRCtoolsbox\maya\
+<YOUR_PATH_TO_TOOLBOX>\maya\
 ├── plugins\
 │   └── lrc_toolbox_plugin.py     # ← ONLY plugin file Maya sees
 ├── lrc_toolbox\                  # ← Package directory
 │   ├── main.py
+│   ├── core\
+│   │   ├── batch_render_api.py
+│   │   └── process_manager.py
 │   ├── ui\
 │   │   ├── main_window.py
 │   │   └── widgets\
-│   │       └── asset_navigator.py
-│   └── config\
-│       └── settings.py
+│   │       ├── batch_render_widget.py
+│   │       └── floating_process_table.py
+│   └── utils\
+│       ├── frame_parser.py
+│       └── render_settings.py
 ├── test_ui.py                    # ← Not in plugin path
 ├── install_plugin.py             # ← Not in plugin path
-└── README_MAYA_PLUGIN.md         # ← Not in plugin path
+└── MAYA_SETUP_GUIDE.md           # ← This file
 ```
 
 ## ✅ **Why This Fixes the Issues:**
@@ -68,9 +84,15 @@ cmds.lrcToolboxOpen()
 ```python
 # In Maya Script Editor (Python tab):
 import sys
-sys.path.insert(0, r"E:\dev\LRCtoolsbox\LRCtoolsbox\maya")
+sys.path.insert(0, r"<YOUR_PATH_TO_TOOLBOX>\maya")
 from lrc_toolbox.main import create_dockable_ui
 ui = create_dockable_ui()
+
+# Example for development:
+# sys.path.insert(0, r"E:\dev\LRCtoolsbox\LRCtoolsbox\maya")
+
+# Example for production:
+# sys.path.insert(0, r"V:\SWA\tools\maya\lrc_toolbox\maya")
 ```
 
 ## 🎯 **Expected Result:**

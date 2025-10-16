@@ -186,6 +186,9 @@ class BatchRenderAPI(QObject):
         Start batch render with given configuration.
         Uses queue system to respect max_concurrent_jobs limit.
 
+        CRITICAL: For non-sequential frames (e.g., "1001,1010"), splits into separate jobs
+        because Render.exe only supports start/end/step, not comma-separated frames.
+
         Args:
             config: Render configuration
 
@@ -196,9 +199,56 @@ class BatchRenderAPI(QObject):
             if not self.initialize():
                 return False
 
-        # CRITICAL FIX: Create process entry immediately (even if queued)
-        # This makes queued jobs visible in the UI
+        # Parse frames first to check if we need to split
+        from ..utils.frame_parser import parse_frame_range
+        frames = parse_frame_range(config.frame_range)
 
+        # Check if frames are sequential
+        is_sequential = len(frames) == 1 or all(frames[i] == frames[i-1] + 1 for i in range(1, len(frames)))
+
+        # CRITICAL: Split non-sequential frames into separate jobs
+        # Render.exe only supports start/end/step, NOT comma-separated frames
+        if not is_sequential:
+            print(f"[BatchRenderAPI] Non-sequential frames detected: {config.frame_range}")
+            print(f"[BatchRenderAPI] Splitting into {len(frames)} separate render jobs")
+
+            success_count = 0
+            for frame in frames:
+                # Create separate config for each frame
+                frame_config = RenderConfig(
+                    scene_file=config.scene_file,
+                    layers=config.layers,
+                    frame_range=str(frame),  # Single frame
+                    gpu_id=config.gpu_id,
+                    cpu_threads=config.cpu_threads,
+                    render_mode=config.render_mode,
+                    render_method=config.render_method,
+                    renderer=config.renderer,
+                    use_gpu=config.use_gpu,
+                    output_path=config.output_path,
+                    custom_settings=config.custom_settings
+                )
+
+                # Submit each frame as separate job
+                if self._start_single_frame_job(frame_config):
+                    success_count += 1
+
+            print(f"[BatchRenderAPI] Submitted {success_count}/{len(frames)} frame jobs")
+            return success_count > 0
+
+        # Sequential frames - proceed with normal single job
+        return self._start_single_frame_job(config)
+
+    def _start_single_frame_job(self, config: RenderConfig) -> bool:
+        """
+        Start a single render job (internal method).
+
+        Args:
+            config: Render configuration
+
+        Returns:
+            True if job started/queued successfully
+        """
         # Create process ID
         process_id = self._generate_process_id()
 
@@ -431,33 +481,45 @@ class BatchRenderAPI(QObject):
             import re
 
             # Arnold: "Rendering frame 5 of 10"
-            # Redshift: "Rendering layer 'layer_name', frame 5 (5/10)"
+            # Redshift: "Rendering layer 'layer_name', frame 1001 (1/1)"  ← START (don't count!)
+            # Redshift: "Frame done - total time for layer 'X', frame 1001 (1/1): ..."  ← END (count!)
             # Note: Redshift outputs multiple lines per frame (for each AOV/tile)
             # We need to track unique frames to avoid counting duplicates
-            frame_match = re.search(r'frame\s+(\d+).*?[(/](\d+)[)/]', message, re.IGNORECASE)
-            if frame_match:
-                current_frame = int(frame_match.group(1))
-                total_frames = int(frame_match.group(2))
 
-                # Store total frames if not set
-                if process.total_frames == 0:
-                    process.total_frames = total_frames
+            # CRITICAL: Only update progress on "Frame done" messages, NOT "Rendering" messages
+            # Redshift outputs "Rendering frame X (Y/Z)" at START and "Frame done" at END
+            # We only want to count completed frames, not started frames
 
-                # Update current frame (track highest frame seen)
-                if current_frame > process.current_frame:
-                    process.current_frame = current_frame
+            # Pattern 1: "Frame done" - Redshift completion message
+            if 'frame done' in message.lower() or 'frame rendered' in message.lower():
+                frame_match = re.search(r'frame\s+(\d+)\s*\((\d+)/(\d+)\)', message, re.IGNORECASE)
+                if frame_match:
+                    current_frame_number = int(frame_match.group(1))  # Actual frame number (e.g., 1001)
+                    completed_count = int(frame_match.group(2))       # Completed frames (e.g., 1)
+                    total_count = int(frame_match.group(3))           # Total frames (e.g., 1)
 
-                    # Calculate progress (cap at 100%)
-                    if total_frames > 0:
-                        progress = min(100.0, (current_frame / total_frames) * 100.0)
+                    # Store total frames if not set
+                    if process.total_frames == 0:
+                        process.total_frames = total_count
 
-                        # Only update if progress increased
-                        if progress > process.progress:
-                            process.progress = progress
+                    # Update current frame NUMBER (for display)
+                    process.current_frame = current_frame_number
 
-                            # Emit progress signal
-                            if hasattr(self, 'render_progress'):
-                                self.render_progress.emit(process_id, progress)
+                    # Update completed frames COUNT (track highest seen)
+                    if completed_count > process.completed_frames:
+                        process.completed_frames = completed_count
+
+                        # Calculate progress based on completed/total COUNT (not frame numbers!)
+                        if total_count > 0:
+                            progress = min(100.0, (completed_count / total_count) * 100.0)
+
+                            # Only update if progress increased
+                            if progress > process.progress:
+                                process.progress = progress
+
+                                # Emit progress signal
+                                if hasattr(self, 'render_progress'):
+                                    self.render_progress.emit(process_id, progress)
 
             # Parse output path from saved file messages
             # Redshift: "Saved file 'V:/path/to/file.exr'"
@@ -473,11 +535,50 @@ class BatchRenderAPI(QObject):
                     print(f"[BatchRenderAPI] Detected output path: {output_dir}")
 
             # Detect render completion messages
-            # Redshift: "Render complete"
+            # Redshift: "Rendering layer 'X' done - total time for N frames: ..."
+            # Redshift: "Frame done - total time for layer 'X', frame N (N/N): ..."
             # Arnold: "render done"
-            if re.search(r'render\s+(complete|done|finished)', message, re.IGNORECASE):
-                print(f"[BatchRenderAPI] Detected render completion message for {process_id}")
-                # Don't set status here - let process monitoring handle it
+            # CRITICAL: GPU renders don't exit cleanly, so we detect completion from logs
+            completion_patterns = [
+                r'Rendering layer.*done.*total time',  # Redshift layer complete
+                r'Frame done.*\((\d+)/(\d+)\)',         # Redshift frame complete (check if last frame)
+                r'render\s+(complete|done|finished)',   # Generic completion
+            ]
+
+            for pattern in completion_patterns:
+                match = re.search(pattern, message, re.IGNORECASE)
+                if match:
+                    # For frame completion, check if it's the last frame
+                    if 'Frame done' in message and match.lastindex >= 2:
+                        current = int(match.group(1))
+                        total = int(match.group(2))
+                        if current != total:
+                            continue  # Not the last frame, don't mark as complete
+
+                    print(f"[BatchRenderAPI] Detected render completion message for {process_id}")
+
+                    # Mark process as completed
+                    if process.status == ProcessStatus.RENDERING:
+                        process.status = ProcessStatus.COMPLETED
+                        process.progress = 100.0
+                        process.end_time = datetime.now()
+
+                        print(f"[BatchRenderAPI] Process {process_id} marked as COMPLETED (from log detection)")
+
+                        # Emit completion signals
+                        if hasattr(self, 'render_progress'):
+                            self.render_progress.emit(process_id, 100.0)
+                        if hasattr(self, 'render_completed'):
+                            self.render_completed.emit(process_id, True)
+
+                        # Cleanup process resources
+                        if self._process_manager:
+                            self._process_manager.cleanup_process(process_id)
+
+                        # Process queue for next job
+                        self._process_queue()
+
+                    break  # Found completion, no need to check other patterns
                 # Just ensure progress is at 100%
                 if process.progress < 100.0:
                     process.progress = 100.0

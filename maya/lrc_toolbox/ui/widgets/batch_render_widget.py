@@ -1146,8 +1146,9 @@ class BatchRenderWidget(QtWidgets.QWidget):
 
             # Column 4: Progress
             progress_text = f"{process.progress:.1f}%"
-            if process.current_frame > 0 and process.total_frames > 0:
-                progress_text += f" ({process.current_frame}/{process.total_frames})"
+            # Show completed/total count (not frame numbers!)
+            if process.completed_frames > 0 and process.total_frames > 0:
+                progress_text += f" ({process.completed_frames}/{process.total_frames})"
             self.process_table.setItem(row, 4, QtWidgets.QTableWidgetItem(progress_text))
 
             # Column 5: Time

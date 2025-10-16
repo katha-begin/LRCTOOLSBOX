@@ -122,18 +122,18 @@ class ProcessManager:
     def is_process_running(self, process_id: str) -> bool:
         """
         Check if process is still running.
-        
+
         Args:
             process_id: Process ID
-            
+
         Returns:
             True if process is running, False otherwise
         """
         process = self._active_processes.get(process_id)
-        
+
         if not process:
             return False
-        
+
         return process.poll() is None
     
     def get_process_return_code(self, process_id: str) -> Optional[int]:

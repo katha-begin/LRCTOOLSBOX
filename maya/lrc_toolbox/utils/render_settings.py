@@ -13,69 +13,51 @@ from typing import Optional, Tuple
 def get_render_output_path(scene_file: str, layer_name: str) -> Optional[str]:
     """
     Get the render output path from scene file's render settings.
-    
-    Parses the filename prefix from render settings and constructs
-    the absolute output directory path.
-    
+
+    NOTE: This function does NOT open the scene file.
+    It relies on fallback methods (parse file or construct path).
+
     Args:
         scene_file: Path to Maya scene file
         layer_name: Render layer name
-    
+
     Returns:
         Absolute output directory path, or None if not found
-    
+
     Example:
         Input: W:/SWA/all/scene/Ep01/sq0040/SH0200/lighting/publish/v005/<RenderLayer>/<RenderLayer>/<RenderLayer>.####.ext
         Output: W:/SWA/all/scene/Ep01/sq0040/SH0200/lighting/publish/v005/MASTER_CHAR_A/MASTER_CHAR_A
     """
-    try:
-        import maya.cmds as cmds
-        
-        # Get current scene to restore later
-        current_scene = cmds.file(query=True, sceneName=True)
-        
-        # Open the scene file (quietly)
-        cmds.file(scene_file, open=True, force=True, ignoreVersion=True)
-        
-        # Get filename prefix from render settings
-        # This is the path template with <RenderLayer> tokens
-        filename_prefix = cmds.getAttr("defaultRenderGlobals.imageFilePrefix")
-        
-        # Restore original scene
-        if current_scene:
-            cmds.file(current_scene, open=True, force=True, ignoreVersion=True)
-        
-        if not filename_prefix:
-            print("[RenderSettings] No filename prefix found in render settings")
-            return None
-        
-        print(f"[RenderSettings] Filename prefix: {filename_prefix}")
-        
-        # Replace <RenderLayer> tokens with actual layer name
-        output_path = filename_prefix.replace("<RenderLayer>", layer_name)
-        
-        # Remove filename part (everything after last /)
-        if "/" in output_path or "\\" in output_path:
-            output_path = os.path.dirname(output_path)
-        
-        # Make absolute path
-        if not os.path.isabs(output_path):
-            # Relative to scene file directory
-            scene_dir = os.path.dirname(scene_file)
-            output_path = os.path.join(scene_dir, output_path)
-        
-        # Normalize path
-        output_path = os.path.normpath(output_path)
-        
-        print(f"[RenderSettings] Output path: {output_path}")
-        
-        return output_path
-        
-    except Exception as e:
-        print(f"[RenderSettings] Error getting output path: {e}")
-        import traceback
-        traceback.print_exc()
+    # Try to parse from file (fast, doesn't open scene)
+    print("[RenderSettings] Parsing render settings from file (no scene open)")
+
+    filename_prefix = parse_filename_prefix_from_file(scene_file)
+
+    if not filename_prefix:
+        print("[RenderSettings] No filename prefix found in render settings")
         return None
+
+    print(f"[RenderSettings] Filename prefix: {filename_prefix}")
+
+    # Replace <RenderLayer> tokens with actual layer name
+    output_path = filename_prefix.replace("<RenderLayer>", layer_name)
+
+    # Remove filename part (everything after last /)
+    if "/" in output_path or "\\" in output_path:
+        output_path = os.path.dirname(output_path)
+
+    # Make absolute path
+    if not os.path.isabs(output_path):
+        # Relative to scene file directory
+        scene_dir = os.path.dirname(scene_file)
+        output_path = os.path.join(scene_dir, output_path)
+
+    # Normalize path
+    output_path = os.path.normpath(output_path)
+
+    print(f"[RenderSettings] Output path: {output_path}")
+
+    return output_path
 
 
 def parse_filename_prefix_from_file(scene_file: str) -> Optional[str]:

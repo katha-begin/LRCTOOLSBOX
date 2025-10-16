@@ -177,16 +177,27 @@ def open_lrc_toolbox():
         
     except ImportError as e:
         # Provide detailed diagnostics
-        current_paths = [path for path in sys.path if 'LRCtoolsbox' in path or 'maya' in path]
+        current_paths = [path for path in sys.path if 'swaLRC' in path or 'LRCtoolsbox' in path or 'maya' in path]
+
+        # Try to determine the correct path dynamically
+        suggested_path = parent_dir if 'parent_dir' in locals() and parent_dir else '<PLUGIN_DIRECTORY>/maya'
+
         error_msg = (
             f"❌ Failed to import LRC Toolbox modules: {str(e)}\n\n"
             f"Diagnostics:\n"
             f"• Parent directory: {parent_dir if 'parent_dir' in locals() else 'Not found'}\n"
-            f"• Current Python paths with 'maya': {current_paths}\n"
+            f"• Current Python paths: {current_paths}\n"
             f"• Expected structure: lrc_toolbox/main.py\n\n"
-            f"Try running this in Script Editor:\n"
-            f"import sys; sys.path.insert(0, r'<YOUR_PATH_TO_MAYA_DIRECTORY>')\n"
-            f"from lrc_toolbox.main import create_dockable_ui; create_dockable_ui()"
+            f"Solution:\n"
+            f"1. Add to Maya.env (replace with your actual path):\n"
+            f"   PYTHONPATH={suggested_path};$PYTHONPATH\n"
+            f"2. Restart Maya\n"
+            f"3. Reload plugin\n\n"
+            f"Or run manually in Script Editor (Python tab):\n"
+            f"import sys\n"
+            f"sys.path.insert(0, r'{suggested_path}')\n"
+            f"from lrc_toolbox.main import create_dockable_ui\n"
+            f"ui = create_dockable_ui()"
         )
         om.MGlobal.displayError(error_msg)
         print(error_msg)  # Also print to console
