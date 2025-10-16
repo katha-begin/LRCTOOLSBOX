@@ -245,21 +245,26 @@ class RenderExecutionManager:
     def build_environment(self, config: RenderConfig) -> Dict[str, str]:
         """
         Build environment variables for render process.
-        
+
         Args:
             config: Render configuration
-            
+
         Returns:
             Dictionary of environment variables
         """
         env = os.environ.copy()
-        
-        # Set GPU
-        env["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
-        
+
+        # Set GPU - CRITICAL: Convert 1-based to 0-based indexing
+        # Our UI uses 1-based (GPU 1, GPU 2, GPU 3...)
+        # CUDA uses 0-based (device 0, device 1, device 2...)
+        cuda_device_id = config.gpu_id - 1  # Convert to 0-based
+        env["CUDA_VISIBLE_DEVICES"] = str(cuda_device_id)
+
+        print(f"[RenderExec] GPU assignment: GPU {config.gpu_id} → CUDA device {cuda_device_id}")
+
         # Set CPU threads (if supported by renderer)
         env["OMP_NUM_THREADS"] = str(config.cpu_threads)
-        
+
         return env
     
     def _create_custom_render_script(self, config: RenderConfig,

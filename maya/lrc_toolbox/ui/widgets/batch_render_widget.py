@@ -593,21 +593,41 @@ class BatchRenderWidget(QtWidgets.QWidget):
             if result == QtWidgets.QMessageBox.No:
                 return
 
+        # Get current scene file for output path calculation
+        try:
+            import maya.cmds as cmds
+            current_scene = cmds.file(query=True, sceneName=True)
+            if not current_scene:
+                QtWidgets.QMessageBox.warning(self, "Error", "No scene file open. Please save your scene first.")
+                return
+        except Exception as e:
+            print(f"[UI] Error getting current scene: {e}")
+            QtWidgets.QMessageBox.warning(self, "Error", f"Could not get current scene file: {e}")
+            return
+
         # Start render for each layer (will queue if needed)
         success_count = 0
-        for layer in layers:
+        for layer_index, layer in enumerate(layers):
             # Get GPU for this job
             if gpu_mode == "manual":
                 gpu_id = self.gpu_combo.currentData()
                 if gpu_id is None:
                     gpu_id = 1
             else:
-                # Auto mode - API will assign GPU
-                gpu_id = 1  # Default, will be managed by queue
+                # Auto mode - Use round-robin GPU assignment
+                # Get available GPUs from system info
+                system_info = self._api.get_system_info()
+                if system_info and system_info.gpus:
+                    gpu_count = len(system_info.gpus)
+                    # Round-robin: distribute jobs across all GPUs
+                    gpu_id = (layer_index % gpu_count) + 1  # 1-based indexing
+                    print(f"[UI] Auto-assigning layer '{layer}' to GPU {gpu_id} (of {gpu_count} GPUs)")
+                else:
+                    gpu_id = 1  # Fallback if no GPU info
 
-            # Create config
+            # Create config with CURRENT scene file (critical for correct output path)
             config = RenderConfig(
-                scene_file="",  # Will be set by API
+                scene_file=current_scene,  # CRITICAL: Use current scene for version extraction
                 layers=[layer],
                 frame_range=frame_range,
                 gpu_id=gpu_id,

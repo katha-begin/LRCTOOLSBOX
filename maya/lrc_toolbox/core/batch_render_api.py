@@ -82,6 +82,9 @@ class BatchRenderAPI(QObject):
         # Queue management - CRITICAL FIX for concurrent job control
         self._job_queue: List[str] = []  # Stores process_ids, not configs
         self._max_concurrent_jobs = 1  # Default: 1 job at a time
+
+        # GPU assignment tracking for auto mode
+        self._next_gpu_index = 0  # Round-robin GPU assignment
     
     def initialize(self) -> bool:
         """
@@ -144,6 +147,26 @@ class BatchRenderAPI(QObject):
         """
         return sum(1 for p in self._processes.values()
                   if p.status in [ProcessStatus.RENDERING, ProcessStatus.INITIALIZING])
+
+    def _get_next_available_gpu(self) -> int:
+        """
+        Get next available GPU using round-robin distribution.
+
+        Returns:
+            GPU ID (1-based) to use for next job
+        """
+        # Get available GPUs from system info
+        if self._system_info and self._system_info.gpus:
+            gpu_count = len(self._system_info.gpus)
+
+            # Round-robin assignment
+            gpu_id = (self._next_gpu_index % gpu_count) + 1  # 1-based indexing
+            self._next_gpu_index += 1
+
+            return gpu_id
+        else:
+            # Fallback: use GPU 1 if no system info
+            return 1
 
     def _process_queue(self) -> None:
         """Process job queue - start jobs if slots available."""
