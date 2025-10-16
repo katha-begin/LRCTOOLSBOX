@@ -25,7 +25,7 @@ A modular Maya lighting and render setup management tool with enhanced template 
 ## 🏗️ Project Structure
 
 ```
-maya/src/lrc_toolbox/
+maya/lrc_toolbox/
 ├── core/                    # Business logic and data models
 │   ├── project_manager.py   # Project structure navigation
 │   ├── version_manager.py   # Version control and hero files
@@ -77,7 +77,7 @@ pip install -e .[dev]
 ```python
 # In Maya Script Editor
 import sys
-sys.path.append(r"E:/dev/LRCtoolsbox/LRCtoolsbox/maya/src")
+sys.path.append(r"E:/dev/LRCtoolsbox/LRCtoolsbox/maya")
 
 from lrc_toolbox.main import create_dockable_ui
 ui = create_dockable_ui()
@@ -86,7 +86,7 @@ ui = create_dockable_ui()
 ### Standalone Development
 
 ```bash
-cd maya/src
+cd maya
 python -m lrc_toolbox.main
 ```
 
@@ -112,10 +112,10 @@ pytest -m "maya"      # Maya integration tests
 ### Code Formatting
 ```bash
 # Format code
-black maya/src/lrc_toolbox/
+black maya/lrc_toolbox/
 
 # Check linting
-flake8 maya/src/lrc_toolbox/
+flake8 maya/lrc_toolbox/
 ```
 
 ## 📋 Implementation Status

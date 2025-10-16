@@ -1,0 +1,4 @@
+# Universal one-liner to run Save & Settings tool in Maya Script Editor
+# Works on ANY machine, ANY drive - Copy and paste this into Maya's Script Editor (Python tab) and run:
+
+import os, glob, string; drives = [f"{d}:/" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")] if os.name == 'nt' else ['']; patterns = [f"{drive}*/LRCtoolsbox/maya/mockup/save_and_setting.py" for drive in drives] + [f"{drive}*/LRCtoolsbox/LRCtoolsbox/maya/mockup/save_and_setting.py" for drive in drives] + [f"{drive}*/maya/mockup/save_and_setting.py" for drive in drives]; script_path = next((p for pattern in patterns for p in glob.glob(pattern) if os.path.exists(p) and 'WIN_ID' in open(p).read(1000)), None); exec(open(script_path).read()) if script_path else print("❌ save_and_setting.py not found on any drive")
