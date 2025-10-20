@@ -175,10 +175,12 @@ class RenderExecutionManager:
 
         # GPU selection - CRITICAL for Redshift/Arnold GPU
         # Convert 1-based UI index to 0-based CUDA device ID
+        # IMPORTANT: Must use array format {0} not just 0
         if config.use_gpu and config.gpu_id is not None:
             cuda_device_id = config.gpu_id - 1  # Convert to 0-based
-            command.extend(["-gpu", str(cuda_device_id)])
-            print(f"[RenderExec] GPU flag: -gpu {cuda_device_id} (UI GPU {config.gpu_id})")
+            gpu_array = "{" + str(cuda_device_id) + "}"  # Format as {0}, {1}, {2}, etc.
+            command.extend(["-gpu", gpu_array])
+            print(f"[RenderExec] GPU flag: -gpu {gpu_array} (UI GPU {config.gpu_id})")
 
         # Render layer
         if config.layers:
