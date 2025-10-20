@@ -173,6 +173,13 @@ class RenderExecutionManager:
         # Renderer
         command.extend(["-r", config.renderer])
 
+        # GPU selection - CRITICAL for Redshift/Arnold GPU
+        # Convert 1-based UI index to 0-based CUDA device ID
+        if config.use_gpu and config.gpu_id is not None:
+            cuda_device_id = config.gpu_id - 1  # Convert to 0-based
+            command.extend(["-gpu", str(cuda_device_id)])
+            print(f"[RenderExec] GPU flag: -gpu {cuda_device_id} (UI GPU {config.gpu_id})")
+
         # Render layer
         if config.layers:
             command.extend(["-rl", config.layers[0]])
@@ -353,6 +360,32 @@ def main():
         except Exception as e:
             print(f"[Render] ERROR: Failed to set renderer: {{e}}")
             return 1
+
+        # Set GPU device (for Redshift/Arnold GPU)
+        gpu_enabled = {config.use_gpu}
+        gpu_id = {config.gpu_id}
+        if gpu_enabled and gpu_id is not None:
+            cuda_device_id = gpu_id - 1  # Convert 1-based to 0-based
+            print(f"[Render] Setting GPU device: {{cuda_device_id}} (UI GPU {{gpu_id}})")
+            try:
+                # Redshift GPU selection
+                if "{config.renderer}" == "redshift":
+                    # Set Redshift to use specific GPU
+                    if cmds.objExists("redshiftOptions"):
+                        # Set GPU device list (comma-separated for multiple GPUs)
+                        cmds.setAttr("redshiftOptions.gpuDeviceList", str(cuda_device_id), type="string")
+                        print(f"[Render] Redshift GPU device set to: {{cuda_device_id}}")
+
+                # Arnold GPU selection
+                elif "{config.renderer}" == "arnold":
+                    if cmds.objExists("defaultArnoldRenderOptions"):
+                        # Set Arnold GPU device
+                        cmds.setAttr("defaultArnoldRenderOptions.renderDevice", 1)  # 1 = GPU
+                        # Arnold uses CUDA_VISIBLE_DEVICES env var (already set)
+                        print(f"[Render] Arnold GPU mode enabled, device: {{cuda_device_id}}")
+
+            except Exception as e:
+                print(f"[Render] Warning: Could not set GPU device: {{e}}")
 
         # Render frames
         frames = {frames}

@@ -431,9 +431,12 @@ class BatchRenderWidget(QtWidgets.QWidget):
                     if gpu.is_available:
                         mem_gb = gpu.memory_total / (1024 ** 3)
                         status = " (shared)" if system_info.gpu_count == 1 else ""
+                        # CRITICAL: Store 1-based GPU ID for UI consistency
+                        # gpu.device_id is 0-based from CUDA, but we show 1-based in UI
+                        ui_gpu_id = gpu.device_id + 1  # Convert to 1-based
                         self.gpu_combo.addItem(
-                            f"GPU {gpu.device_id}: {gpu.name} ({mem_gb:.0f}GB){status}",
-                            gpu.device_id
+                            f"GPU {ui_gpu_id}: {gpu.name} ({mem_gb:.0f}GB){status}",
+                            ui_gpu_id  # Store 1-based ID
                         )
     
     def _refresh_render_layers(self) -> None:
