@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Maya Render Setup Manager
 A comprehensive tool for managing render setups, lights, and shot workflows in Maya.
@@ -21,7 +22,7 @@ Directory Structure Support: V:\SWA\all\scene\Ep00\sq0010\SH0010\lighting\versio
 Usage:
     # Copy this file to: E:\dev\LRCtoolsbox\LRCtoolsbox\maya\src\maya_render_setup_manager.py
     # In Maya, run:
-    exec(open(r'E:\dev\LRCtoolsbox\LRCtoolsbox\maya\src\maya_render_setup_manager.py').read())
+    exec(open(r'E:\dev\LRCtoolsbox\LRCtoolsbox\maya\src\maya_render_setup_manager.py', encoding='utf-8').read())
     show_ui()
 """
 
@@ -306,7 +307,7 @@ class VersionManager:
                 "previous_file": current_file
             }
             
-            with open(info_file, 'w') as f:
+            with open(info_file, 'w', encoding='utf-8') as f:
                 json.dump(version_info, f, indent=2)
             
             # Create/update hero file
@@ -474,7 +475,7 @@ class RenderSetupManager:
             }
             
             template_file = os.path.join(self.templates_dir, f"{name}.json")
-            with open(template_file, 'w') as f:
+            with open(template_file, 'w', encoding='utf-8') as f:
                 json.dump(template_data, f, indent=2)
             
             return True, f"Template '{name}' created successfully"
@@ -540,7 +541,7 @@ class RenderSetupManager:
                 "mayaVersion": cmds.about(version=True)
             }
             
-            with open(filepath, 'w') as f:
+            with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             
             return True, f"Render setup exported to {filepath}"
@@ -569,7 +570,7 @@ class LightManager:
         rules_file = os.path.join(cmds.internalVar(userPrefDir=True), "lightNamingRules.json")
         if os.path.exists(rules_file):
             try:
-                with open(rules_file, 'r') as f:
+                with open(rules_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except:
                 pass
@@ -1670,7 +1671,7 @@ class RenderSetupUI(QMainWindow):
             
             # Save naming rules
             rules_file = os.path.join(cmds.internalVar(userPrefDir=True), "lightNamingRules.json")
-            with open(rules_file, 'w') as f:
+            with open(rules_file, 'w', encoding='utf-8') as f:
                 json.dump(rules, f, indent=2)
             
             self.light_manager.naming_rules = rules
@@ -1771,7 +1772,7 @@ INSTALLATION & USAGE:
 1. Copy this file to: E:\dev\LRCtoolsbox\LRCtoolsbox\maya\src\maya_render_setup_manager.py
 
 2. In Maya Script Editor (Python), run:
-   exec(open(r'E:\\dev\\LRCtoolsbox\\LRCtoolsbox\\maya\\src\\maya_render_setup_manager.py').read())
+   exec(open(r'E:\\dev\\LRCtoolsbox\\LRCtoolsbox\\maya\\src\\maya_render_setup_manager.py', encoding='utf-8').read())
    
    OR simply run:
    show_ui()
