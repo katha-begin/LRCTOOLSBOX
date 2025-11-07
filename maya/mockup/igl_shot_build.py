@@ -348,6 +348,20 @@ class ShotBuildTab(QtWidgets.QWidget):
         logging_opts_layout.addStretch()
         setup_layout.addLayout(logging_opts_layout)
 
+        # Place3D method selection
+        place3d_method_layout = QtWidgets.QHBoxLayout()
+        self.use_matrix_method_checkbox = QtWidgets.QCheckBox("Use Matrix Method for Place3D (instead of Constraints)")
+        self.use_matrix_method_checkbox.setToolTip(
+            "Use decomposeMatrix nodes instead of parent/scale constraints for Place3D linking.\n"
+            "Matrix method: Cleaner scene, better performance, 1 node per link.\n"
+            "Constraint method (default): Traditional approach, 2 nodes per link."
+        )
+        self.use_matrix_method_checkbox.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self.use_matrix_method_checkbox.setChecked(False)  # Default to constraint method
+        place3d_method_layout.addWidget(self.use_matrix_method_checkbox)
+        place3d_method_layout.addStretch()
+        setup_layout.addLayout(place3d_method_layout)
+
         # Build buttons
         build_layout = QtWidgets.QVBoxLayout()
 
@@ -2427,6 +2441,10 @@ class ShotBuildTab(QtWidgets.QWidget):
                     self._log("[INFO] No Place3D pairs found for {}".format(asset['name']))
                     continue
 
+                # Determine which method to use based on checkbox
+                use_matrix = self.use_matrix_method_checkbox.isChecked()
+                method_name = "Matrix" if use_matrix else "Constraint"
+
                 # Process each pair (same as working Place3D tab)
                 for pair in pairs:
                     place = pair["place"]
@@ -2436,11 +2454,20 @@ class ShotBuildTab(QtWidgets.QWidget):
                         self._log("[SKIP] No transform for place3D: {}".format(place))
                         continue
 
-                    # Snap TRS and constrain (same as working version)
+                    # Snap TRS (same for both methods)
                     snap_result = _snap_trs_world(xform, place, dry_run=False)
-                    constrain_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
 
-                    self._log("[PLACE3D] {}  <--  {}  ::  {} | {}".format(place, xform, snap_result, constrain_result))
+                    # Apply connection method based on user choice
+                    if use_matrix:
+                        # Use matrix method
+                        connect_result = _matrix_transfer_transform(xform, place, force=False, dry_run=False)
+                    else:
+                        # Use constraint method (default)
+                        connect_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
+
+                    self._log("[PLACE3D] {}  <--  {}  ::  {} | {} ({})".format(
+                        place, xform, snap_result, connect_result, method_name
+                    ))
 
             except Exception as e:
                 self._log("[ERROR] Place3D failed for {}: {}".format(asset['filename'], str(e)))
@@ -3068,11 +3095,24 @@ class ShotBuildTab(QtWidgets.QWidget):
             if cmds.namespace(exists=shader_ns):
                 pairs = _find_place3d_pairs_by_place(shader_ns, geo_ns, "_Place3dTexture", "_Grp", allow_fuzzy=True)
                 if pairs:
+                    # Determine which method to use based on checkbox
+                    use_matrix = self.use_matrix_method_checkbox.isChecked()
+                    method_name = "Matrix" if use_matrix else "Constraint"
+
                     for pair in pairs:
                         if pair["xform"] and pair["place"]:  # Only process if both exist
+                            # Snap TRS (same for both methods)
                             _snap_trs_world(pair["xform"], pair["place"])
-                            _parent_and_scale_constrain(pair["xform"], pair["place"])
-                    self._log("Place3D Linker: {} pairs processed for {}".format(len(pairs), asset['filename']))
+
+                            # Apply connection method based on user choice
+                            if use_matrix:
+                                _matrix_transfer_transform(pair["xform"], pair["place"])
+                            else:
+                                _parent_and_scale_constrain(pair["xform"], pair["place"])
+
+                    self._log("Place3D Linker ({}): {} pairs processed for {}".format(
+                        method_name, len(pairs), asset['filename']
+                    ))
                 else:
                     self._log("Place3D Linker: No pairs found for {}".format(asset['filename']))
             else:
@@ -4762,6 +4802,127 @@ def _parent_and_scale_constrain(src_xform, dst_node, force=False, dry_run=False)
     except Exception as e:
         return "error: {}".format(e)
 
+def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
+    """
+    Transfer transform from src to dst using matrix decomposition.
+
+    This is an alternative to constraint-based linking that uses Maya's
+    decomposeMatrix node for cleaner, more performant connections.
+
+    Method:
+    1. Create decomposeMatrix node
+    2. Connect src_xform.worldMatrix[0] → decomposeMatrix.inputMatrix
+    3. Connect decomposeMatrix outputs → dst_node (translate, rotate, scale, shear)
+
+    Args:
+        src_xform (str): Source transform node (e.g., "CHAR_Kit_001:Body_Grp")
+        dst_node (str): Destination place3dTexture node (e.g., "CHAR_Kit_001_shade:Body_Place3dTexture")
+        force (bool): If True, remove existing matrix connections before creating new ones
+        dry_run (bool): If True, only report what would be done without making changes
+
+    Returns:
+        str: Status message ("matrix-linked", "error: ...", etc.)
+
+    Example:
+        result = _matrix_transfer_transform("CHAR_Kit_001:Body_Grp",
+                                           "CHAR_Kit_001_shade:Body_Place3dTexture")
+        # Result: "matrix-linked"
+    """
+    if dry_run:
+        return "would create decomposeMatrix connection"
+
+    try:
+        # Cleanup existing connections if force is enabled
+        if force:
+            _delete_existing_matrix_connections(dst_node)
+
+        # Unlock transform attributes on destination node
+        _unlock_trs(dst_node)
+
+        # Create decomposeMatrix node with descriptive name
+        decomp_name = "EE_{}_decomp".format(_short(dst_node))
+
+        # Check if decomposeMatrix node already exists
+        if cmds.objExists(decomp_name):
+            if not force:
+                return "matrix connection already exists (use force=True to replace)"
+            else:
+                cmds.delete(decomp_name)
+
+        # Create the decomposeMatrix node
+        decomp = cmds.createNode("decomposeMatrix", name=decomp_name)
+
+        # Connect worldMatrix[0] from source to inputMatrix of decomposeMatrix
+        cmds.connectAttr(
+            "{}.worldMatrix[0]".format(src_xform),
+            "{}.inputMatrix".format(decomp),
+            force=True
+        )
+
+        # Connect decomposeMatrix outputs to destination transform attributes
+        cmds.connectAttr(
+            "{}.outputTranslate".format(decomp),
+            "{}.translate".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputRotate".format(decomp),
+            "{}.rotate".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputScale".format(decomp),
+            "{}.scale".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputShear".format(decomp),
+            "{}.shear".format(dst_node),
+            force=True
+        )
+
+        return "matrix-linked"
+
+    except Exception as e:
+        return "error: {}".format(e)
+
+def _delete_existing_matrix_connections(node):
+    """
+    Remove existing decomposeMatrix connections from a node.
+
+    Searches for decomposeMatrix nodes connected to the node's transform
+    attributes (translate, rotate, scale, shear) and deletes them.
+
+    Args:
+        node (str): Node to clean up (e.g., "CHAR_Kit_001_shade:Body_Place3dTexture")
+
+    Example:
+        _delete_existing_matrix_connections("CHAR_Kit_001_shade:Body_Place3dTexture")
+    """
+    try:
+        # Find all connections to transform attributes
+        attrs_to_check = ["translate", "rotate", "scale", "shear"]
+        decomp_nodes = set()
+
+        for attr in attrs_to_check:
+            full_attr = "{}.{}".format(node, attr)
+            if cmds.objExists(full_attr):
+                # Get incoming connections
+                connections = cmds.listConnections(full_attr, source=True, destination=False, plugs=False) or []
+                for conn in connections:
+                    # Check if it's a decomposeMatrix node
+                    if cmds.nodeType(conn) == "decomposeMatrix":
+                        decomp_nodes.add(conn)
+
+        # Delete all found decomposeMatrix nodes
+        for decomp in decomp_nodes:
+            if cmds.objExists(decomp):
+                cmds.delete(decomp)
+
+    except Exception as e:
+        # Silently fail - this is a cleanup function
+        pass
+
 def _connect_shading_attributes(geo_ns, shader_ns, dry_run=False):
     """Connect animation cache attributes from ShadingAttr_Grp to shader namespace.
 
@@ -4952,6 +5113,176 @@ class Place3DTab(QtWidgets.QWidget):
                 self._log("No shading attributes to connect")
 
         self._log("=== Place3D Apply done (DryRun={}, Force={}) ===".format(dry, force))
+
+# =============================================================================
+# Matrix-Based Place3D Tab - Alternative to constraint-based method
+# =============================================================================
+
+class MatrixPlace3DTab(QtWidgets.QWidget):
+    """
+    Matrix-based Place3D linker tab.
+
+    This tab provides an alternative to the constraint-based Place3D linking method.
+    Instead of using parentConstraint + scaleConstraint, it uses Maya's decomposeMatrix
+    node for cleaner, more performant transform connections.
+
+    Features:
+    - Same scanning logic as Place3DTab
+    - Uses _matrix_transfer_transform() instead of constraints
+    - Shares namespace dropdowns from main window
+    - Independent testing environment
+    """
+
+    def __init__(self, shared_geo_combo, shared_shader_combo, parent=None):
+        super(MatrixPlace3DTab, self).__init__(parent)
+        self.shared_geo_ns = shared_geo_combo
+        self.shared_shd_ns = shared_shader_combo
+        self._build()
+        self._wire()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Title label
+        title = QtWidgets.QLabel("Matrix-Based Place3D Linker")
+        title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #2196F3;")
+        layout.addWidget(title)
+
+        info = QtWidgets.QLabel("Uses decomposeMatrix nodes instead of constraints for cleaner connections")
+        info.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(info)
+
+        layout.addSpacing(10)
+
+        # Suffixes (tab-specific)
+        row_suf = QtWidgets.QHBoxLayout()
+        self.edit_geo_suffix = QtWidgets.QLineEdit("_Grp")
+        self.edit_place_suffix = QtWidgets.QLineEdit("_Place3dTexture")
+        row_suf.addWidget(QtWidgets.QLabel("Geo Suffix"))
+        row_suf.addWidget(self.edit_geo_suffix)
+        row_suf.addSpacing(10)
+        row_suf.addWidget(QtWidgets.QLabel("Place3D Suffix"))
+        row_suf.addWidget(self.edit_place_suffix)
+        layout.addLayout(row_suf)
+
+        # Options
+        row_opts = QtWidgets.QHBoxLayout()
+        self.chk_dry = QtWidgets.QCheckBox("Dry Run")
+        self.chk_dry.setChecked(True)
+        self.chk_force = QtWidgets.QCheckBox("Force replace existing matrix connections")
+        self.chk_fuzzy = QtWidgets.QCheckBox("Fuzzy match")
+        self.chk_fuzzy.setChecked(True)
+        row_opts.addWidget(self.chk_dry)
+        row_opts.addWidget(self.chk_force)
+        row_opts.addWidget(self.chk_fuzzy)
+        row_opts.addStretch(1)
+        layout.addLayout(row_opts)
+
+        # Actions
+        row_btns = QtWidgets.QHBoxLayout()
+        self.btn_scan = QtWidgets.QPushButton("Scan (Place3D → Geo)")
+        self.btn_apply = QtWidgets.QPushButton("Apply Matrix Transfer")
+        self.btn_apply.setStyleSheet("font-weight: bold; background-color: #2196F3; color: white;")
+        row_btns.addStretch(1)
+        row_btns.addWidget(self.btn_scan)
+        row_btns.addWidget(self.btn_apply)
+        layout.addLayout(row_btns)
+
+        # Table + Log
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([
+            "place3dTexture (Shader)",
+            "Transform (Geo)",
+            "Match",
+            "Result"
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table, 1)
+
+        self.log = QtWidgets.QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
+        layout.addWidget(self.log)
+
+    def _wire(self):
+        self.btn_scan.clicked.connect(self._do_scan)
+        self.btn_apply.clicked.connect(self._do_apply)
+
+    def _log(self, msg):
+        self.log.appendPlainText(msg)
+
+    def _do_scan(self):
+        geo_ns = self.shared_geo_ns.currentText().strip()
+        shd_ns = self.shared_shd_ns.currentText().strip()
+        geo_suf = self.edit_geo_suffix.text()
+        place_suf = self.edit_place_suffix.text()
+        fuzzy = self.chk_fuzzy.isChecked()
+
+        if not geo_ns or not shd_ns:
+            self._log("Select Geometry/Shader namespaces from the top bar.")
+            return
+
+        self.pairs = _find_place3d_pairs_by_place(shd_ns, geo_ns, place_suf, geo_suf, allow_fuzzy=fuzzy)
+        self._populate(self.pairs)
+        missing = sum(1 for p in self.pairs if not p["xform"])
+        self._log("Scan: {} place3dTexture, {} missing transforms".format(len(self.pairs), missing))
+
+    def _populate(self, pairs):
+        self.table.setRowCount(0)
+        for p in pairs:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(p["place"]))
+            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(p["xform"] or "-"))
+            match_item = QtWidgets.QTableWidgetItem("OK" if p["xform"] else "Missing")
+            match_item.setForeground(QtCore.Qt.darkGreen if p["xform"] else QtCore.Qt.red)
+            self.table.setItem(r, 2, match_item)
+            self.table.setItem(r, 3, QtWidgets.QTableWidgetItem("-"))
+        self.table.resizeColumnsToContents()
+
+    def _do_apply(self):
+        dry = self.chk_dry.isChecked()
+        force = self.chk_force.isChecked()
+        geo_ns = self.shared_geo_ns.currentText().strip()
+        shd_ns = self.shared_shd_ns.currentText().strip()
+
+        self._log("=== Applying Matrix-Based Place3D Transfer ===")
+
+        # Apply matrix transfer for each pair
+        for r in range(self.table.rowCount()):
+            place = self.table.item(r, 0).text()
+            xform = self.table.item(r, 1).text()
+
+            if xform == "-":
+                self.table.item(r, 3).setText("No transform")
+                continue
+
+            # Snap TRS first (same as constraint method)
+            s = _snap_trs_world(xform, place, dry)
+
+            # Apply matrix transfer instead of constraints
+            m = _matrix_transfer_transform(xform, place, force, dry)
+
+            res = "{} | {}".format(s, m)
+            self.table.item(r, 3).setText(res)
+            self._log("{}  <--  {}  ::  {} (Matrix)".format(place, xform, res))
+
+        # Connect shading attributes if both namespaces are available
+        if geo_ns and shd_ns and not dry:
+            self._log("=== Connecting Shading Attributes ===")
+            attr_results = _connect_shading_attributes(geo_ns, shd_ns, dry_run=dry)
+            if attr_results:
+                for result in attr_results:
+                    self._log("  {}".format(result))
+                connected_count = sum(1 for r in attr_results if r.startswith("// Result: Connected"))
+                if connected_count > 0:
+                    self._log("Connected {} shading attributes".format(connected_count))
+                else:
+                    self._log("No new shading attribute connections needed")
+            else:
+                self._log("No shading attributes to connect")
+
+        self._log("=== Matrix Place3D Apply done (DryRun={}, Force={}) ===".format(dry, force))
 
 # =============================================================================
 # TAB 2: BlendShape Builder (Anim -> Groom) - Groom-first scan
@@ -5732,6 +6063,7 @@ class MainTools(QtWidgets.QDialog):
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(ShotBuildTab(), "Shot Build")
         tabs.addTab(Place3DTab(self.geo_ns_global, self.shd_ns_global), "Place3D Linker")
+        tabs.addTab(MatrixPlace3DTab(self.geo_ns_global, self.shd_ns_global), "Matrix Place3D Linker")
         tabs.addTab(BlendShapeTab(self.geo_ns_global), "BlendShape (Anim -> Groom)")
         tabs.addTab(AssignShaderTab(self.geo_ns_global, self.shd_ns_global), "Assign Shader (by Namespace)")
         outer.addWidget(tabs)
