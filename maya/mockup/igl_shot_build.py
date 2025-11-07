@@ -5075,6 +5075,176 @@ class Place3DTab(QtWidgets.QWidget):
         self._log("=== Place3D Apply done (DryRun={}, Force={}) ===".format(dry, force))
 
 # =============================================================================
+# Matrix-Based Place3D Tab - Alternative to constraint-based method
+# =============================================================================
+
+class MatrixPlace3DTab(QtWidgets.QWidget):
+    """
+    Matrix-based Place3D linker tab.
+
+    This tab provides an alternative to the constraint-based Place3D linking method.
+    Instead of using parentConstraint + scaleConstraint, it uses Maya's decomposeMatrix
+    node for cleaner, more performant transform connections.
+
+    Features:
+    - Same scanning logic as Place3DTab
+    - Uses _matrix_transfer_transform() instead of constraints
+    - Shares namespace dropdowns from main window
+    - Independent testing environment
+    """
+
+    def __init__(self, shared_geo_combo, shared_shader_combo, parent=None):
+        super(MatrixPlace3DTab, self).__init__(parent)
+        self.shared_geo_ns = shared_geo_combo
+        self.shared_shd_ns = shared_shader_combo
+        self._build()
+        self._wire()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Title label
+        title = QtWidgets.QLabel("Matrix-Based Place3D Linker")
+        title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #2196F3;")
+        layout.addWidget(title)
+
+        info = QtWidgets.QLabel("Uses decomposeMatrix nodes instead of constraints for cleaner connections")
+        info.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(info)
+
+        layout.addSpacing(10)
+
+        # Suffixes (tab-specific)
+        row_suf = QtWidgets.QHBoxLayout()
+        self.edit_geo_suffix = QtWidgets.QLineEdit("_Grp")
+        self.edit_place_suffix = QtWidgets.QLineEdit("_Place3dTexture")
+        row_suf.addWidget(QtWidgets.QLabel("Geo Suffix"))
+        row_suf.addWidget(self.edit_geo_suffix)
+        row_suf.addSpacing(10)
+        row_suf.addWidget(QtWidgets.QLabel("Place3D Suffix"))
+        row_suf.addWidget(self.edit_place_suffix)
+        layout.addLayout(row_suf)
+
+        # Options
+        row_opts = QtWidgets.QHBoxLayout()
+        self.chk_dry = QtWidgets.QCheckBox("Dry Run")
+        self.chk_dry.setChecked(True)
+        self.chk_force = QtWidgets.QCheckBox("Force replace existing matrix connections")
+        self.chk_fuzzy = QtWidgets.QCheckBox("Fuzzy match")
+        self.chk_fuzzy.setChecked(True)
+        row_opts.addWidget(self.chk_dry)
+        row_opts.addWidget(self.chk_force)
+        row_opts.addWidget(self.chk_fuzzy)
+        row_opts.addStretch(1)
+        layout.addLayout(row_opts)
+
+        # Actions
+        row_btns = QtWidgets.QHBoxLayout()
+        self.btn_scan = QtWidgets.QPushButton("Scan (Place3D → Geo)")
+        self.btn_apply = QtWidgets.QPushButton("Apply Matrix Transfer")
+        self.btn_apply.setStyleSheet("font-weight: bold; background-color: #2196F3; color: white;")
+        row_btns.addStretch(1)
+        row_btns.addWidget(self.btn_scan)
+        row_btns.addWidget(self.btn_apply)
+        layout.addLayout(row_btns)
+
+        # Table + Log
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([
+            "place3dTexture (Shader)",
+            "Transform (Geo)",
+            "Match",
+            "Result"
+        ])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table, 1)
+
+        self.log = QtWidgets.QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
+        layout.addWidget(self.log)
+
+    def _wire(self):
+        self.btn_scan.clicked.connect(self._do_scan)
+        self.btn_apply.clicked.connect(self._do_apply)
+
+    def _log(self, msg):
+        self.log.appendPlainText(msg)
+
+    def _do_scan(self):
+        geo_ns = self.shared_geo_ns.currentText().strip()
+        shd_ns = self.shared_shd_ns.currentText().strip()
+        geo_suf = self.edit_geo_suffix.text()
+        place_suf = self.edit_place_suffix.text()
+        fuzzy = self.chk_fuzzy.isChecked()
+
+        if not geo_ns or not shd_ns:
+            self._log("Select Geometry/Shader namespaces from the top bar.")
+            return
+
+        self.pairs = _find_place3d_pairs_by_place(shd_ns, geo_ns, place_suf, geo_suf, allow_fuzzy=fuzzy)
+        self._populate(self.pairs)
+        missing = sum(1 for p in self.pairs if not p["xform"])
+        self._log("Scan: {} place3dTexture, {} missing transforms".format(len(self.pairs), missing))
+
+    def _populate(self, pairs):
+        self.table.setRowCount(0)
+        for p in pairs:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(p["place"]))
+            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(p["xform"] or "-"))
+            match_item = QtWidgets.QTableWidgetItem("OK" if p["xform"] else "Missing")
+            match_item.setForeground(QtCore.Qt.darkGreen if p["xform"] else QtCore.Qt.red)
+            self.table.setItem(r, 2, match_item)
+            self.table.setItem(r, 3, QtWidgets.QTableWidgetItem("-"))
+        self.table.resizeColumnsToContents()
+
+    def _do_apply(self):
+        dry = self.chk_dry.isChecked()
+        force = self.chk_force.isChecked()
+        geo_ns = self.shared_geo_ns.currentText().strip()
+        shd_ns = self.shared_shd_ns.currentText().strip()
+
+        self._log("=== Applying Matrix-Based Place3D Transfer ===")
+
+        # Apply matrix transfer for each pair
+        for r in range(self.table.rowCount()):
+            place = self.table.item(r, 0).text()
+            xform = self.table.item(r, 1).text()
+
+            if xform == "-":
+                self.table.item(r, 3).setText("No transform")
+                continue
+
+            # Snap TRS first (same as constraint method)
+            s = _snap_trs_world(xform, place, dry)
+
+            # Apply matrix transfer instead of constraints
+            m = _matrix_transfer_transform(xform, place, force, dry)
+
+            res = "{} | {}".format(s, m)
+            self.table.item(r, 3).setText(res)
+            self._log("{}  <--  {}  ::  {} (Matrix)".format(place, xform, res))
+
+        # Connect shading attributes if both namespaces are available
+        if geo_ns and shd_ns and not dry:
+            self._log("=== Connecting Shading Attributes ===")
+            attr_results = _connect_shading_attributes(geo_ns, shd_ns, dry_run=dry)
+            if attr_results:
+                for result in attr_results:
+                    self._log("  {}".format(result))
+                connected_count = sum(1 for r in attr_results if r.startswith("// Result: Connected"))
+                if connected_count > 0:
+                    self._log("Connected {} shading attributes".format(connected_count))
+                else:
+                    self._log("No new shading attribute connections needed")
+            else:
+                self._log("No shading attributes to connect")
+
+        self._log("=== Matrix Place3D Apply done (DryRun={}, Force={}) ===".format(dry, force))
+
+# =============================================================================
 # TAB 2: BlendShape Builder (Anim -> Groom) - Groom-first scan
 #   Base (blendShape): Groom   |   Target: Anim   |   Weight=1.0
 #   Uses ONLY the shared Geometry NS from the header (no per-tab NS dropdowns)
@@ -5853,6 +6023,7 @@ class MainTools(QtWidgets.QDialog):
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(ShotBuildTab(), "Shot Build")
         tabs.addTab(Place3DTab(self.geo_ns_global, self.shd_ns_global), "Place3D Linker")
+        tabs.addTab(MatrixPlace3DTab(self.geo_ns_global, self.shd_ns_global), "Matrix Place3D Linker")
         tabs.addTab(BlendShapeTab(self.geo_ns_global), "BlendShape (Anim -> Groom)")
         tabs.addTab(AssignShaderTab(self.geo_ns_global, self.shd_ns_global), "Assign Shader (by Namespace)")
         outer.addWidget(tabs)
