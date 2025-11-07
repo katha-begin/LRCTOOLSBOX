@@ -4762,6 +4762,127 @@ def _parent_and_scale_constrain(src_xform, dst_node, force=False, dry_run=False)
     except Exception as e:
         return "error: {}".format(e)
 
+def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
+    """
+    Transfer transform from src to dst using matrix decomposition.
+
+    This is an alternative to constraint-based linking that uses Maya's
+    decomposeMatrix node for cleaner, more performant connections.
+
+    Method:
+    1. Create decomposeMatrix node
+    2. Connect src_xform.worldMatrix[0] → decomposeMatrix.inputMatrix
+    3. Connect decomposeMatrix outputs → dst_node (translate, rotate, scale, shear)
+
+    Args:
+        src_xform (str): Source transform node (e.g., "CHAR_Kit_001:Body_Grp")
+        dst_node (str): Destination place3dTexture node (e.g., "CHAR_Kit_001_shade:Body_Place3dTexture")
+        force (bool): If True, remove existing matrix connections before creating new ones
+        dry_run (bool): If True, only report what would be done without making changes
+
+    Returns:
+        str: Status message ("matrix-linked", "error: ...", etc.)
+
+    Example:
+        result = _matrix_transfer_transform("CHAR_Kit_001:Body_Grp",
+                                           "CHAR_Kit_001_shade:Body_Place3dTexture")
+        # Result: "matrix-linked"
+    """
+    if dry_run:
+        return "would create decomposeMatrix connection"
+
+    try:
+        # Cleanup existing connections if force is enabled
+        if force:
+            _delete_existing_matrix_connections(dst_node)
+
+        # Unlock transform attributes on destination node
+        _unlock_trs(dst_node)
+
+        # Create decomposeMatrix node with descriptive name
+        decomp_name = "EE_{}_decomp".format(_short(dst_node))
+
+        # Check if decomposeMatrix node already exists
+        if cmds.objExists(decomp_name):
+            if not force:
+                return "matrix connection already exists (use force=True to replace)"
+            else:
+                cmds.delete(decomp_name)
+
+        # Create the decomposeMatrix node
+        decomp = cmds.createNode("decomposeMatrix", name=decomp_name)
+
+        # Connect worldMatrix[0] from source to inputMatrix of decomposeMatrix
+        cmds.connectAttr(
+            "{}.worldMatrix[0]".format(src_xform),
+            "{}.inputMatrix".format(decomp),
+            force=True
+        )
+
+        # Connect decomposeMatrix outputs to destination transform attributes
+        cmds.connectAttr(
+            "{}.outputTranslate".format(decomp),
+            "{}.translate".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputRotate".format(decomp),
+            "{}.rotate".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputScale".format(decomp),
+            "{}.scale".format(dst_node),
+            force=True
+        )
+        cmds.connectAttr(
+            "{}.outputShear".format(decomp),
+            "{}.shear".format(dst_node),
+            force=True
+        )
+
+        return "matrix-linked"
+
+    except Exception as e:
+        return "error: {}".format(e)
+
+def _delete_existing_matrix_connections(node):
+    """
+    Remove existing decomposeMatrix connections from a node.
+
+    Searches for decomposeMatrix nodes connected to the node's transform
+    attributes (translate, rotate, scale, shear) and deletes them.
+
+    Args:
+        node (str): Node to clean up (e.g., "CHAR_Kit_001_shade:Body_Place3dTexture")
+
+    Example:
+        _delete_existing_matrix_connections("CHAR_Kit_001_shade:Body_Place3dTexture")
+    """
+    try:
+        # Find all connections to transform attributes
+        attrs_to_check = ["translate", "rotate", "scale", "shear"]
+        decomp_nodes = set()
+
+        for attr in attrs_to_check:
+            full_attr = "{}.{}".format(node, attr)
+            if cmds.objExists(full_attr):
+                # Get incoming connections
+                connections = cmds.listConnections(full_attr, source=True, destination=False, plugs=False) or []
+                for conn in connections:
+                    # Check if it's a decomposeMatrix node
+                    if cmds.nodeType(conn) == "decomposeMatrix":
+                        decomp_nodes.add(conn)
+
+        # Delete all found decomposeMatrix nodes
+        for decomp in decomp_nodes:
+            if cmds.objExists(decomp):
+                cmds.delete(decomp)
+
+    except Exception as e:
+        # Silently fail - this is a cleanup function
+        pass
+
 def _connect_shading_attributes(geo_ns, shader_ns, dry_run=False):
     """Connect animation cache attributes from ShadingAttr_Grp to shader namespace.
 
