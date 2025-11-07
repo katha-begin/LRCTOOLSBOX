@@ -348,6 +348,20 @@ class ShotBuildTab(QtWidgets.QWidget):
         logging_opts_layout.addStretch()
         setup_layout.addLayout(logging_opts_layout)
 
+        # Place3D method selection
+        place3d_method_layout = QtWidgets.QHBoxLayout()
+        self.use_matrix_method_checkbox = QtWidgets.QCheckBox("Use Matrix Method for Place3D (instead of Constraints)")
+        self.use_matrix_method_checkbox.setToolTip(
+            "Use decomposeMatrix nodes instead of parent/scale constraints for Place3D linking.\n"
+            "Matrix method: Cleaner scene, better performance, 1 node per link.\n"
+            "Constraint method (default): Traditional approach, 2 nodes per link."
+        )
+        self.use_matrix_method_checkbox.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self.use_matrix_method_checkbox.setChecked(False)  # Default to constraint method
+        place3d_method_layout.addWidget(self.use_matrix_method_checkbox)
+        place3d_method_layout.addStretch()
+        setup_layout.addLayout(place3d_method_layout)
+
         # Build buttons
         build_layout = QtWidgets.QVBoxLayout()
 
@@ -2427,6 +2441,10 @@ class ShotBuildTab(QtWidgets.QWidget):
                     self._log("[INFO] No Place3D pairs found for {}".format(asset['name']))
                     continue
 
+                # Determine which method to use based on checkbox
+                use_matrix = self.use_matrix_method_checkbox.isChecked()
+                method_name = "Matrix" if use_matrix else "Constraint"
+
                 # Process each pair (same as working Place3D tab)
                 for pair in pairs:
                     place = pair["place"]
@@ -2436,11 +2454,20 @@ class ShotBuildTab(QtWidgets.QWidget):
                         self._log("[SKIP] No transform for place3D: {}".format(place))
                         continue
 
-                    # Snap TRS and constrain (same as working version)
+                    # Snap TRS (same for both methods)
                     snap_result = _snap_trs_world(xform, place, dry_run=False)
-                    constrain_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
 
-                    self._log("[PLACE3D] {}  <--  {}  ::  {} | {}".format(place, xform, snap_result, constrain_result))
+                    # Apply connection method based on user choice
+                    if use_matrix:
+                        # Use matrix method
+                        connect_result = _matrix_transfer_transform(xform, place, force=False, dry_run=False)
+                    else:
+                        # Use constraint method (default)
+                        connect_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
+
+                    self._log("[PLACE3D] {}  <--  {}  ::  {} | {} ({})".format(
+                        place, xform, snap_result, connect_result, method_name
+                    ))
 
             except Exception as e:
                 self._log("[ERROR] Place3D failed for {}: {}".format(asset['filename'], str(e)))
@@ -3068,11 +3095,24 @@ class ShotBuildTab(QtWidgets.QWidget):
             if cmds.namespace(exists=shader_ns):
                 pairs = _find_place3d_pairs_by_place(shader_ns, geo_ns, "_Place3dTexture", "_Grp", allow_fuzzy=True)
                 if pairs:
+                    # Determine which method to use based on checkbox
+                    use_matrix = self.use_matrix_method_checkbox.isChecked()
+                    method_name = "Matrix" if use_matrix else "Constraint"
+
                     for pair in pairs:
                         if pair["xform"] and pair["place"]:  # Only process if both exist
+                            # Snap TRS (same for both methods)
                             _snap_trs_world(pair["xform"], pair["place"])
-                            _parent_and_scale_constrain(pair["xform"], pair["place"])
-                    self._log("Place3D Linker: {} pairs processed for {}".format(len(pairs), asset['filename']))
+
+                            # Apply connection method based on user choice
+                            if use_matrix:
+                                _matrix_transfer_transform(pair["xform"], pair["place"])
+                            else:
+                                _parent_and_scale_constrain(pair["xform"], pair["place"])
+
+                    self._log("Place3D Linker ({}): {} pairs processed for {}".format(
+                        method_name, len(pairs), asset['filename']
+                    ))
                 else:
                     self._log("Place3D Linker: No pairs found for {}".format(asset['filename']))
             else:
