@@ -4839,8 +4839,10 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         # Unlock transform attributes on destination node
         _unlock_trs(dst_node)
 
-        # Create decomposeMatrix node with descriptive name
-        decomp_name = "EE_{}_decomp".format(_short(dst_node))
+        # Create decomposeMatrix node with descriptive name (include namespace for uniqueness)
+        # Replace colons with underscores to ensure unique names per asset
+        # Example: CHAR_Kit_001_shade:Body_Place3dTexture -> EE_CHAR_Kit_001_shade_Body_Place3dTexture_decomp
+        decomp_name = "EE_{}_decomp".format(dst_node.replace(":", "_"))
 
         # Check if decomposeMatrix node already exists
         if cmds.objExists(decomp_name):
