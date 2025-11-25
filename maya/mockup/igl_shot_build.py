@@ -4847,12 +4847,28 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         # Check if decomposeMatrix node already exists
         if cmds.objExists(decomp_name):
             if not force:
-                return "matrix connection already exists (use force=True to replace)"
+                # Check if it's already connected to the correct source
+                existing_connections = cmds.listConnections(
+                    "{}.inputMatrix".format(decomp_name),
+                    source=True, destination=False, plugs=True
+                ) or []
+
+                expected_connection = "{}.worldMatrix[0]".format(src_xform)
+                if expected_connection in existing_connections:
+                    return "matrix connection already exists (correct)"
+                else:
+                    return "matrix connection already exists but wrong source (use force=True to replace)"
             else:
                 cmds.delete(decomp_name)
 
         # Create the decomposeMatrix node
         decomp = cmds.createNode("decomposeMatrix", name=decomp_name)
+
+        # Verify the actual created name (Maya might append numbers if name exists)
+        if decomp != decomp_name:
+            # Maya renamed the node - this shouldn't happen if our naming is unique
+            # but we'll use the actual name returned by createNode
+            pass
 
         # Connect worldMatrix[0] from source to inputMatrix of decomposeMatrix
         cmds.connectAttr(
@@ -4886,7 +4902,9 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         return "matrix-linked"
 
     except Exception as e:
-        return "error: {}".format(e)
+        import traceback
+        error_details = traceback.format_exc()
+        return "error: {} | Details: {}".format(str(e), error_details.split('\n')[-2])
 
 def _delete_existing_matrix_connections(node):
     """
