@@ -2417,57 +2417,81 @@ class ShotBuildTab(QtWidgets.QWidget):
 
                 # Namespace patterns
                 geo_ns = asset['namespace']  # CHAR_MainCharacter_001
-                shader_ns = "{}_{}_{}_shade".format(category, name, identifier)  # CHAR_MainCharacter_001_shade
 
-                # Check if both namespaces exist
+                # Check if geo namespace exists
                 if not cmds.namespace(exists=geo_ns):
                     self._log("[WARNING] Geo namespace does not exist: {}".format(geo_ns))
                     continue
 
-                if not cmds.namespace(exists=shader_ns):
-                    self._log("[INFO] No shader namespace for Place3D: {}".format(shader_ns))
+                # Find shader namespace(s) - may be auto-renamed by Maya
+                # Expected: CHAR_MainCharacter_001_shade
+                # Actual may be: CHAR_MainCharacter_001_shade1, CHAR_MainCharacter_001_shade2, etc.
+                expected_shader_ns = "{}_{}_{}_shade".format(category, name, identifier)
+
+                # Get all namespaces and find matches
+                all_namespaces = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
+                shader_namespaces = []
+
+                # First check if expected namespace exists
+                if cmds.namespace(exists=expected_shader_ns):
+                    shader_namespaces.append(expected_shader_ns)
+
+                # Also check for auto-renamed versions (shade1, shade2, etc.)
+                import re
+                shader_pattern = re.compile(r'^{}_shade\d*$'.format(re.escape(geo_ns)))
+                for ns in all_namespaces:
+                    if shader_pattern.match(ns) and ns not in shader_namespaces:
+                        shader_namespaces.append(ns)
+
+                if not shader_namespaces:
+                    self._log("[INFO] No shader namespace found for: {} (expected: {})".format(geo_ns, expected_shader_ns))
                     continue
 
-                self._log("[PLACE3D] Processing: {} (geo) ↔ {} (shader)".format(geo_ns, shader_ns))
+                # Process each shader namespace (usually just one, but handle multiple)
+                for shader_ns in shader_namespaces:
+                    if shader_ns != expected_shader_ns:
+                        self._log("[PLACE3D] Processing: {} (geo) ↔ {} (shader - AUTO-RENAMED)".format(geo_ns, shader_ns))
+                    else:
+                        self._log("[PLACE3D] Processing: {} (geo) ↔ {} (shader)".format(geo_ns, shader_ns))
 
-                # Use same logic as working Place3D tab
-                geo_suffix = "_Grp"
-                place_suffix = "_Place3dTexture"
+                    # Use same logic as working Place3D tab
+                    geo_suffix = "_Grp"
+                    place_suffix = "_Place3dTexture"
 
-                # Find Place3D pairs using existing function
-                pairs = _find_place3d_pairs_by_place(shader_ns, geo_ns, place_suffix, geo_suffix, allow_fuzzy=True)
+                    # Find Place3D pairs using existing function
+                    pairs = _find_place3d_pairs_by_place(shader_ns, geo_ns, place_suffix, geo_suffix, allow_fuzzy=True)
 
-                if not pairs:
-                    self._log("[INFO] No Place3D pairs found for {}".format(asset['name']))
-                    continue
-
-                # Determine which method to use based on checkbox
-                use_matrix = self.use_matrix_method_checkbox.isChecked()
-                method_name = "Matrix" if use_matrix else "Constraint"
-
-                # Process each pair (same as working Place3D tab)
-                for pair in pairs:
-                    place = pair["place"]
-                    xform = pair["xform"]
-
-                    if not xform:
-                        self._log("[SKIP] No transform for place3D: {}".format(place))
+                    if not pairs:
+                        self._log("[INFO] No Place3D pairs found in shader namespace: {}".format(shader_ns))
                         continue
 
-                    # Snap TRS (same for both methods)
-                    snap_result = _snap_trs_world(xform, place, dry_run=False)
+                    # Determine which method to use based on checkbox
+                    use_matrix = self.use_matrix_method_checkbox.isChecked()
+                    method_name = "Matrix" if use_matrix else "Constraint"
 
-                    # Apply connection method based on user choice
-                    if use_matrix:
-                        # Use matrix method
-                        connect_result = _matrix_transfer_transform(xform, place, force=False, dry_run=False)
-                    else:
-                        # Use constraint method (default)
-                        connect_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
+                    # Process each pair (same as working Place3D tab)
+                    for pair in pairs:
+                        place = pair["place"]
+                        xform = pair["xform"]
 
-                    self._log("[PLACE3D] {}  <--  {}  ::  {} | {} ({})".format(
-                        place, xform, snap_result, connect_result, method_name
-                    ))
+                        if not xform:
+                            self._log("[SKIP] No transform for place3D: {}".format(place))
+                            continue
+
+                        # Snap TRS (same for both methods)
+                        snap_result = _snap_trs_world(xform, place, dry_run=False)
+
+                        # Apply connection method based on user choice
+                        if use_matrix:
+                            # Use matrix method
+                            connect_result = _matrix_transfer_transform(xform, place, force=False, dry_run=False)
+                        else:
+                            # Use constraint method (default)
+                            connect_result = _parent_and_scale_constrain(xform, place, force=False, dry_run=False)
+
+                        self._log("[PLACE3D] {}  <--  {}  ::  {} | {} ({})".format(
+                            place, xform, snap_result, connect_result, method_name
+                        ))
 
             except Exception as e:
                 self._log("[ERROR] Place3D failed for {}: {}".format(asset['filename'], str(e)))
