@@ -4839,36 +4839,42 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         # Unlock transform attributes on destination node
         _unlock_trs(dst_node)
 
-        # Create decomposeMatrix node with descriptive name (include namespace for uniqueness)
-        # Replace colons with underscores to ensure unique names per asset
-        # Example: CHAR_Kit_001_shade:Body_Place3dTexture -> EE_CHAR_Kit_001_shade_Body_Place3dTexture_decomp
-        decomp_name = "EE_{}_decomp".format(dst_node.replace(":", "_"))
+        # Check if destination node already has a decomposeMatrix connection
+        # This matches the constraint method's behavior: check the destination, not global node names
+        existing_decomp = None
+        for attr in ["translate", "rotate", "scale"]:
+            connections = cmds.listConnections(
+                "{}.{}".format(dst_node, attr),
+                source=True, destination=False, type="decomposeMatrix"
+            ) or []
+            if connections:
+                existing_decomp = connections[0]
+                break
 
-        # Check if decomposeMatrix node already exists
-        if cmds.objExists(decomp_name):
-            if not force:
-                # Check if it's already connected to the correct source
-                existing_connections = cmds.listConnections(
-                    "{}.inputMatrix".format(decomp_name),
-                    source=True, destination=False, plugs=True
-                ) or []
+        if existing_decomp and not force:
+            # Check if it's connected to the correct source
+            input_connections = cmds.listConnections(
+                "{}.inputMatrix".format(existing_decomp),
+                source=True, destination=False, plugs=True
+            ) or []
 
-                expected_connection = "{}.worldMatrix[0]".format(src_xform)
-                if expected_connection in existing_connections:
-                    return "matrix connection already exists (correct)"
-                else:
-                    return "matrix connection already exists but wrong source (use force=True to replace)"
+            expected_connection = "{}.worldMatrix[0]".format(src_xform)
+            if expected_connection in input_connections:
+                return "matrix connection already exists (correct)"
             else:
-                cmds.delete(decomp_name)
+                return "matrix connection already exists but wrong source (use force=True to replace)"
+
+        # If force=True, delete existing decomposeMatrix connection
+        if existing_decomp and force:
+            cmds.delete(existing_decomp)
+
+        # Create decomposeMatrix node with descriptive name (use _short for consistency with constraints)
+        # This matches the constraint naming pattern: EE_{short_name}_pcon/scon
+        decomp_name = "EE_{}_decomp".format(_short(dst_node))
 
         # Create the decomposeMatrix node
+        # Maya will auto-rename if name exists (e.g., EE_Body_Place3dTexture_decomp1)
         decomp = cmds.createNode("decomposeMatrix", name=decomp_name)
-
-        # Verify the actual created name (Maya might append numbers if name exists)
-        if decomp != decomp_name:
-            # Maya renamed the node - this shouldn't happen if our naming is unique
-            # but we'll use the actual name returned by createNode
-            pass
 
         # Connect worldMatrix[0] from source to inputMatrix of decomposeMatrix
         cmds.connectAttr(
