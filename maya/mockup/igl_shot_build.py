@@ -4840,7 +4840,6 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         _unlock_trs(dst_node)
 
         # Check if destination node already has a decomposeMatrix connection
-        # This matches the constraint method's behavior: check the destination, not global node names
         existing_decomp = None
         for attr in ["translate", "rotate", "scale"]:
             connections = cmds.listConnections(
@@ -4868,13 +4867,27 @@ def _matrix_transfer_transform(src_xform, dst_node, force=False, dry_run=False):
         if existing_decomp and force:
             cmds.delete(existing_decomp)
 
-        # Create decomposeMatrix node with descriptive name (use _short for consistency with constraints)
-        # This matches the constraint naming pattern: EE_{short_name}_pcon/scon
-        decomp_name = "EE_{}_decomp".format(_short(dst_node))
+        # Create decomposeMatrix node with UNIQUE name per asset namespace
+        # Include full namespace path to ensure each asset has its own decomposeMatrix node
+        # Replace colons with underscores to create valid Maya node names
+        # Example: CHAR_Kit_001_shade:Body_Place3dTexture -> EE_CHAR_Kit_001_shade_Body_Place3dTexture_decomp
+        decomp_name = "EE_{}_decomp".format(dst_node.replace(":", "_"))
 
-        # Create the decomposeMatrix node
-        # Maya will auto-rename if name exists (e.g., EE_Body_Place3dTexture_decomp1)
+        # Verify the name doesn't already exist (shouldn't happen if naming is correct)
+        if cmds.objExists(decomp_name):
+            # This shouldn't happen with unique namespace-based naming
+            # But if it does, it means there's a leftover node from previous build
+            if force:
+                cmds.delete(decomp_name)
+            else:
+                return "error: decomposeMatrix node '{}' already exists but not connected to destination (use force=True)".format(decomp_name)
+
+        # Create the decomposeMatrix node with unique name
         decomp = cmds.createNode("decomposeMatrix", name=decomp_name)
+
+        # Verify Maya didn't rename the node (it shouldn't with unique names)
+        if decomp != decomp_name:
+            return "error: Maya renamed decomposeMatrix node from '{}' to '{}' (name collision)".format(decomp_name, decomp)
 
         # Connect worldMatrix[0] from source to inputMatrix of decomposeMatrix
         cmds.connectAttr(
