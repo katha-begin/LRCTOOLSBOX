@@ -113,6 +113,82 @@ class LRCShotBuildCommand(om.MPxCommand):
             om.MGlobal.displayError(f"❌ Error opening Shot Build tool: {str(e)}")
 
 
+# ============================================================================
+# Sets Optimizer Commands
+# ============================================================================
+
+class LRCCameraBasedAssetCommand(om.MPxCommand):
+    """Maya command for opening the Camera Based Asset Cleanup tool."""
+
+    COMMAND_NAME = "lrcOpenCameraBasedAsset"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCCameraBasedAssetCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_camera_based_asset_tool()
+            if result:
+                om.MGlobal.displayInfo("✅ Camera Based Asset tool opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Camera Based Asset tool")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Camera Based Asset tool: {str(e)}")
+
+
+class LRCRef2InstanceCommand(om.MPxCommand):
+    """Maya command for opening the Reference to Instance tool."""
+
+    COMMAND_NAME = "lrcOpenRef2Instance"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCRef2InstanceCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_ref2instance_tool()
+            if result:
+                om.MGlobal.displayInfo("✅ Ref2Instance tool opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Ref2Instance tool")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Ref2Instance tool: {str(e)}")
+
+
+class LRCInstanceSetBuilderCommand(om.MPxCommand):
+    """Maya command for opening the Instance Set Builder tool."""
+
+    COMMAND_NAME = "lrcOpenInstanceSetBuilder"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCInstanceSetBuilderCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_instance_set_builder_tool()
+            if result:
+                om.MGlobal.displayInfo("✅ Instance Set Builder tool opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Instance Set Builder tool")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Instance Set Builder tool: {str(e)}")
+
+
 def open_lrc_toolbox():
     """
     Open the LRC Toolbox UI.
@@ -216,7 +292,7 @@ def create_menu():
         # Check if menu already exists
         if cmds.menu("lrcToolboxMenu", exists=True):
             cmds.deleteUI("lrcToolboxMenu", menu=True)
-        
+
         # Create main menu
         main_menu = cmds.menu(
             "lrcToolboxMenu",
@@ -224,7 +300,7 @@ def create_menu():
             parent="MayaWindow",
             tearOff=True
         )
-        
+
         # Add menu items
         cmds.menuItem(
             label="Open Toolbox",
@@ -248,16 +324,50 @@ def create_menu():
         )
 
         cmds.menuItem(divider=True, parent=main_menu)
-        
+
+        # Sets Optimizer Submenu
+        sets_optimizer_menu = cmds.menuItem(
+            label="Sets Optimizer",
+            subMenu=True,
+            tearOff=True,
+            annotation="Tools for optimizing SETS references and instances",
+            parent=main_menu
+        )
+
+        cmds.menuItem(
+            label="Camera Based Asset",
+            command="import maya.cmds as cmds; cmds.lrcOpenCameraBasedAsset()",
+            annotation="Cleanup assets based on camera visibility",
+            parent=sets_optimizer_menu
+        )
+
+        cmds.menuItem(
+            label="Ref2Instance",
+            command="import maya.cmds as cmds; cmds.lrcOpenRef2Instance()",
+            annotation="Convert duplicate references to instances",
+            parent=sets_optimizer_menu
+        )
+
+        cmds.menuItem(
+            label="Instance Set Builder",
+            command="import maya.cmds as cmds; cmds.lrcOpenInstanceSetBuilder()",
+            annotation="Build SETS with optimized master/instance workflow",
+            parent=sets_optimizer_menu
+        )
+
+        cmds.setParent(main_menu, menu=True)  # Return to main menu level
+
+        cmds.menuItem(divider=True, parent=main_menu)
+
         cmds.menuItem(
             label="About",
             command=lambda *args: show_about_dialog(),
             annotation="About LRC Toolbox v2.0",
             parent=main_menu
         )
-        
+
         print("✅ LRC Toolbox menu created successfully")
-        
+
     except Exception as e:
         om.MGlobal.displayError(f"❌ Failed to create LRC Toolbox menu: {str(e)}")
 
@@ -306,7 +416,7 @@ def initializePlugin(plugin):
     try:
         # Get plugin function set
         plugin_fn = om.MFnPlugin(plugin, PLUGIN_AUTHOR, PLUGIN_VERSION, "Any")
-        
+
         # Register commands
         plugin_fn.registerCommand(
             LRCToolboxCommand.COMMAND_NAME,
@@ -322,10 +432,26 @@ def initializePlugin(plugin):
             LRCShotBuildCommand.COMMAND_NAME,
             LRCShotBuildCommand.creator
         )
-        
+
+        # Sets Optimizer commands
+        plugin_fn.registerCommand(
+            LRCCameraBasedAssetCommand.COMMAND_NAME,
+            LRCCameraBasedAssetCommand.creator
+        )
+
+        plugin_fn.registerCommand(
+            LRCRef2InstanceCommand.COMMAND_NAME,
+            LRCRef2InstanceCommand.creator
+        )
+
+        plugin_fn.registerCommand(
+            LRCInstanceSetBuilderCommand.COMMAND_NAME,
+            LRCInstanceSetBuilderCommand.creator
+        )
+
         # Create menu (delayed to ensure Maya UI is ready)
         cmds.evalDeferred(create_menu)
-        
+
         print(f"✅ {PLUGIN_NAME} v{PLUGIN_VERSION} loaded successfully")
         print(f"📋 Access via: LRC Toolbox menu or lrcToolboxOpen() command")
         
@@ -337,28 +463,33 @@ def initializePlugin(plugin):
 def uninitializePlugin(plugin):
     """Uninitialize the plugin."""
     global _lrc_toolbox_ui
-    
+
     try:
         # Get plugin function set
         plugin_fn = om.MFnPlugin(plugin)
-        
+
         # Clean up UI
         if _lrc_toolbox_ui is not None:
             dock_name = "lrcToolboxDock"
             if cmds.dockControl(dock_name, exists=True):
                 cmds.deleteUI(dock_name, control=True)
             _lrc_toolbox_ui = None
-        
+
         # Remove menu
         remove_menu()
-        
+
         # Deregister commands
         plugin_fn.deregisterCommand(LRCToolboxCommand.COMMAND_NAME)
         plugin_fn.deregisterCommand(LRCSaveSettingsCommand.COMMAND_NAME)
         plugin_fn.deregisterCommand(LRCShotBuildCommand.COMMAND_NAME)
-        
+
+        # Sets Optimizer commands
+        plugin_fn.deregisterCommand(LRCCameraBasedAssetCommand.COMMAND_NAME)
+        plugin_fn.deregisterCommand(LRCRef2InstanceCommand.COMMAND_NAME)
+        plugin_fn.deregisterCommand(LRCInstanceSetBuilderCommand.COMMAND_NAME)
+
         print(f"✅ {PLUGIN_NAME} v{PLUGIN_VERSION} unloaded successfully")
-        
+
     except Exception as e:
         om.MGlobal.displayError(f"❌ Failed to uninitialize {PLUGIN_NAME}: {str(e)}")
         raise
@@ -510,6 +641,139 @@ def lrc_open_shot_build_tool():
 
     except Exception as e:
         error_msg = f"❌ Failed to open Shot Build tool: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        return None
+
+
+# ============================================================================
+# Sets Optimizer Tool Functions
+# ============================================================================
+
+def _find_mockup_script(script_name):
+    """
+    Find a script in the mockup directory.
+
+    Args:
+        script_name: Name of the script file (e.g., "camera_reference_cleanup.py")
+
+    Returns:
+        Full path to the script or None if not found
+    """
+    script_path = None
+
+    # Method 1: Try to get plugin location from Maya's plugin info
+    try:
+        loaded_plugins = cmds.pluginInfo(query=True, listPlugins=True) or []
+        for plugin in loaded_plugins:
+            if "lrc_toolbox_plugin" in plugin.lower():
+                plugin_path = cmds.pluginInfo(plugin, query=True, path=True)
+                if plugin_path:
+                    plugin_dir = os.path.dirname(plugin_path)
+                    mockup_dir = os.path.join(plugin_dir, "..", "mockup")
+                    script_path = os.path.join(mockup_dir, script_name)
+                    script_path = os.path.normpath(script_path)
+                    if os.path.exists(script_path):
+                        return script_path
+    except Exception:
+        pass
+
+    # Method 2: Try relative to this plugin file
+    try:
+        current_file = os.path.abspath(__file__)
+        plugin_dir = os.path.dirname(current_file)
+        mockup_dir = os.path.join(plugin_dir, "..", "mockup")
+        script_path = os.path.join(mockup_dir, script_name)
+        script_path = os.path.normpath(script_path)
+        if os.path.exists(script_path):
+            return script_path
+    except Exception:
+        pass
+
+    # Method 3: Try sys.path
+    for path in sys.path:
+        if 'plugins' in path.lower() or 'maya' in path.lower():
+            if 'plugins' in path.lower():
+                maya_dir = os.path.dirname(path)
+            else:
+                maya_dir = path
+            test_path = os.path.join(maya_dir, "mockup", script_name)
+            if os.path.exists(test_path):
+                return test_path
+
+    return None
+
+
+def lrc_open_camera_based_asset_tool():
+    """Open the Camera Based Asset Cleanup tool."""
+    try:
+        script_path = _find_mockup_script("camera_reference_cleanup.py")
+
+        if not script_path:
+            error_msg = "❌ Camera Based Asset tool script not found (camera_reference_cleanup.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Camera Based Asset tool from: {script_path}")
+        exec_command = f'exec(open(r"{script_path}", encoding="utf-8").read())'
+        cmds.evalDeferred(exec_command)
+
+        om.MGlobal.displayInfo("✅ Camera Based Asset tool opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Camera Based Asset tool: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        return None
+
+
+def lrc_open_ref2instance_tool():
+    """Open the Reference to Instance tool."""
+    try:
+        script_path = _find_mockup_script("ref2ints.py")
+
+        if not script_path:
+            error_msg = "❌ Ref2Instance tool script not found (ref2ints.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Ref2Instance tool from: {script_path}")
+        exec_command = f'exec(open(r"{script_path}", encoding="utf-8").read())'
+        cmds.evalDeferred(exec_command)
+
+        om.MGlobal.displayInfo("✅ Ref2Instance tool opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Ref2Instance tool: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        return None
+
+
+def lrc_open_instance_set_builder_tool():
+    """Open the Instance Set Builder tool."""
+    try:
+        script_path = _find_mockup_script("sets_instance_test.py")
+
+        if not script_path:
+            error_msg = "❌ Instance Set Builder tool script not found (sets_instance_test.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Instance Set Builder tool from: {script_path}")
+        exec_command = f'exec(open(r"{script_path}", encoding="utf-8").read())'
+        cmds.evalDeferred(exec_command)
+
+        om.MGlobal.displayInfo("✅ Instance Set Builder tool opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Instance Set Builder tool: {str(e)}"
         om.MGlobal.displayError(error_msg)
         print(error_msg)
         return None
