@@ -497,8 +497,8 @@ def build_master(group, set_namespace, root_path, project):
         print("  [ERROR] Failed to reference geometry: {}".format(str(e)))
         return None
 
-    # Find top-level geometry group
-    geo_transforms = cmds.ls("{}:*".format(master_ns), type="transform") or []
+    # Find top-level geometry group (use long path for stability)
+    geo_transforms = cmds.ls("{}:*".format(master_ns), type="transform", long=True) or []
     master_geo_group = None
 
     for node in geo_transforms:
@@ -510,6 +510,8 @@ def build_master(group, set_namespace, root_path, project):
     if not master_geo_group:
         print("  [ERROR] Could not find top-level geometry in {}".format(master_ns))
         return None
+
+    print("  [INFO] Master geo group: {}".format(master_geo_group))
 
     # Keep master at ORIGIN - do NOT parent to locator
     # Just reset transform to ensure it's at 0,0,0
@@ -679,8 +681,20 @@ def create_instances(group):
     # Hide the original master geo (it stays at origin, instances are visible)
     if instances_created > 0:
         try:
-            cmds.setAttr("{}.visibility".format(group.master_geo_group), 0)
-            print("  [HIDE] Master geo hidden: {}".format(group.master_geo_group))
+            master_node = group.master_geo_group
+            # Try to find the node if path changed
+            if not cmds.objExists(master_node):
+                # Try short name
+                short_name = master_node.split("|")[-1]
+                matches = cmds.ls(short_name, long=True) or []
+                if matches:
+                    master_node = matches[0]
+
+            if cmds.objExists(master_node):
+                cmds.setAttr("{}.visibility".format(master_node), 0)
+                print("  [HIDE] Master geo hidden: {}".format(master_node))
+            else:
+                print("  [WARNING] Could not find master to hide: {}".format(group.master_geo_group))
         except Exception as e:
             print("  [WARNING] Could not hide master: {}".format(str(e)))
 
