@@ -229,57 +229,89 @@ def assign_component_shaders(geo_ns, shader_ns, log_func=None):
         return 0
 
 
-def _disconnect_from_initial_shading_group(instance_transform):
+def _reassign_shaders_to_instance(instance_transform, master_transform):
     """
-    Disconnect an instance from initialShadingGroup (lambert1).
+    Re-assign correct shaders to instance by copying master's shader assignments.
 
     When Maya creates an instance with cmds.instance(), it automatically connects
-    the instance to initialShadingGroup via instObjGroups. This causes the instance
-    to render with lambert1 instead of inheriting the master's shader.
+    the instance to initialShadingGroup (lambert1). This causes the instance to have
+    TWO shader connections:
+    1. instObjGroups[0] -> initialShadingGroup (lambert1) - WRONG
+    2. instObjGroups[1] -> Correct shading group - CORRECT
 
-    The solution is to disconnect the instance's shape from initialShadingGroup.
-    Since instances share the shape node with the master, the shader assignment
-    from the master will then be used.
+    Simply disconnecting from initialShadingGroup causes the viewport to display green
+    (indicating no shader assigned).
+
+    The correct solution is to RE-ASSIGN the correct shaders to the instance using
+    cmds.sets(shape, e=True, forceElement=shadingGroup). This will:
+    - Remove the connection to initialShadingGroup
+    - Properly connect to the correct shading group
+    - Ensure viewport displays correctly (not green)
+    - Ensure rendering uses the correct shader
 
     Args:
         instance_transform: The transform node of the instance
+        master_transform: The transform node of the master geometry
     """
     try:
-        # Get all shape nodes under the instance (including descendants)
-        shapes = cmds.listRelatives(instance_transform, allDescendents=True,
-                                     type="mesh", fullPath=True) or []
+        # Get all shape nodes under the master
+        master_shapes = cmds.listRelatives(master_transform, allDescendents=True,
+                                          type="mesh", fullPath=True) or []
 
-        if not shapes:
+        if not master_shapes:
             return
 
-        # Get initialShadingGroup
-        initial_sg = "initialShadingGroup"
-        if not cmds.objExists(initial_sg):
+        # Get all shape nodes under the instance (same shapes, different instObjGroups)
+        instance_shapes = cmds.listRelatives(instance_transform, allDescendents=True,
+                                            type="mesh", fullPath=True) or []
+
+        if not instance_shapes:
             return
 
-        for shape in shapes:
-            # Check if shape is connected to initialShadingGroup
-            # The connection is: shape.instObjGroups[n] -> initialShadingGroup.dagSetMembers[m]
-            connections = cmds.listConnections(
-                "{}.instObjGroups".format(shape),
-                source=False, destination=True,
-                plugs=True, connections=True
+        # For each master shape, find its shading groups and re-assign to instance shape
+        for master_shape in master_shapes:
+            # Find all shading groups connected to this master shape
+            # Check instObjGroups connections
+            shading_groups = cmds.listConnections(
+                "{}.instObjGroups".format(master_shape),
+                type="shadingEngine",
+                source=False,
+                destination=True
             ) or []
 
-            # connections is a flat list: [src1, dst1, src2, dst2, ...]
-            for i in range(0, len(connections), 2):
-                src_plug = connections[i]
-                dst_plug = connections[i + 1]
+            # Remove duplicates and filter out initialShadingGroup
+            shading_groups = list(set(shading_groups))
+            shading_groups = [sg for sg in shading_groups if sg != "initialShadingGroup"]
 
-                # Check if destination is initialShadingGroup
-                if initial_sg in dst_plug:
-                    try:
-                        cmds.disconnectAttr(src_plug, dst_plug)
-                    except Exception:
-                        pass  # May already be disconnected
+            if not shading_groups:
+                continue
+
+            # Find corresponding instance shape (same shape node, different transform path)
+            # Get the shape name without the transform path
+            master_shape_name = master_shape.split("|")[-1]
+
+            # Find matching instance shape
+            instance_shape = None
+            for inst_shp in instance_shapes:
+                inst_shape_name = inst_shp.split("|")[-1]
+                if inst_shape_name == master_shape_name:
+                    instance_shape = inst_shp
+                    break
+
+            if not instance_shape:
+                continue
+
+            # Re-assign each shading group to the instance shape
+            # This will automatically disconnect from initialShadingGroup
+            for sg in shading_groups:
+                try:
+                    cmds.sets(instance_shape, e=True, forceElement=sg)
+                except Exception as e:
+                    # Silently fail - may already be assigned
+                    pass
 
     except Exception as e:
-        # Silently fail - shader inheritance should still work
+        # Silently fail - shader assignment should still work
         pass
 
 
@@ -718,10 +750,10 @@ def create_instances(group):
             # Create instance of master geometry
             instance = cmds.instance(group.master_geo_group, name=instance_name)[0]
 
-            # Disconnect instance from initialShadingGroup (lambert1)
-            # Maya automatically connects new instances to initialShadingGroup
-            # which causes them to render with lambert1 instead of the master's shader
-            _disconnect_from_initial_shading_group(instance)
+            # Re-assign correct shaders to instance
+            # Maya automatically connects new instances to initialShadingGroup (lambert1)
+            # We need to re-assign the correct shaders from the master to the instance
+            _reassign_shaders_to_instance(instance, group.master_geo_group)
 
             # Parent to locator
             cmds.parent(instance, loc_info.locator_path)
