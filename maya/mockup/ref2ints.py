@@ -45,6 +45,60 @@ def get_maya_main_window():
     return wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
 
 
+def _disconnect_from_initial_shading_group(instance_transform):
+    """
+    Disconnect an instance from initialShadingGroup (lambert1).
+
+    When Maya creates an instance with cmds.instance(), it automatically connects
+    the instance to initialShadingGroup via instObjGroups. This causes the instance
+    to render with lambert1 instead of inheriting the master's shader.
+
+    The solution is to disconnect the instance's shape from initialShadingGroup.
+    Since instances share the shape node with the master, the shader assignment
+    from the master will then be used.
+
+    Args:
+        instance_transform: The transform node of the instance
+    """
+    try:
+        # Get all shape nodes under the instance (including descendants)
+        shapes = cmds.listRelatives(instance_transform, allDescendents=True,
+                                     type="mesh", fullPath=True) or []
+
+        if not shapes:
+            return
+
+        # Get initialShadingGroup
+        initial_sg = "initialShadingGroup"
+        if not cmds.objExists(initial_sg):
+            return
+
+        for shape in shapes:
+            # Check if shape is connected to initialShadingGroup
+            # The connection is: shape.instObjGroups[n] -> initialShadingGroup.dagSetMembers[m]
+            connections = cmds.listConnections(
+                "{}.instObjGroups".format(shape),
+                source=False, destination=True,
+                plugs=True, connections=True
+            ) or []
+
+            # connections is a flat list: [src1, dst1, src2, dst2, ...]
+            for i in range(0, len(connections), 2):
+                src_plug = connections[i]
+                dst_plug = connections[i + 1]
+
+                # Check if destination is initialShadingGroup
+                if initial_sg in dst_plug:
+                    try:
+                        cmds.disconnectAttr(src_plug, dst_plug)
+                    except Exception:
+                        pass  # May already be disconnected
+
+    except Exception as e:
+        # Silently fail - shader inheritance should still work
+        pass
+
+
 def normalize_ref_file(ref_file):
     """
     Normalize reference file path for comparison.
@@ -376,6 +430,12 @@ class InstanceConverter:
             instance_name = slave.namespace.replace(':', '_') + "_instance"
             instance = cmds.instance(master_geo_path, name=instance_name)[0]
             self.log(f"  ✓ Created instance: {instance}")
+
+            # 3. Disconnect instance from initialShadingGroup (lambert1)
+            # Maya automatically connects new instances to initialShadingGroup
+            # which causes them to render with lambert1 instead of the master's shader
+            _disconnect_from_initial_shading_group(instance)
+            self.log(f"  ✓ Disconnected from initialShadingGroup")
 
             # 3. Apply transform to instance
             cmds.xform(instance, worldSpace=True, matrix=world_matrix)
