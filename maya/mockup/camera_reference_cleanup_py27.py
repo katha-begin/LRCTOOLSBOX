@@ -886,8 +886,8 @@ class ReferenceCleanupUI:
                 return []
             
             print("\nCamera Frustum Info:")
-            print("  H-FOV: {}°".format(math.degrees(frustum['h_fov']):.2f))
-            print("  V-FOV: {}°".format(math.degrees(frustum['v_fov']):.2f))
+            print("  H-FOV: {:.2f}°".format(math.degrees(frustum['h_fov'])))
+            print("  V-FOV: {:.2f}°".format(math.degrees(frustum['v_fov'])))
             print("  Padding: {}".format(self.frustum_padding))
             
             all_meshes = cmds.ls(type='mesh', long=True)
