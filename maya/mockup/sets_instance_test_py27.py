@@ -813,7 +813,7 @@ class SetsInstanceTestUI(QtWidgets.QDialog):
     WINDOW_TITLE = "SETS Instance Builder v1.1"
 
     def __init__(self, parent=get_maya_main_window()):
-        super().__init__(parent)
+        super(SetsInstanceTestUI, self).__init__(parent)
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setMinimumSize(1200, 700)

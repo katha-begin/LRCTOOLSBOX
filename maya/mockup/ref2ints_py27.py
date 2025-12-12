@@ -535,9 +535,9 @@ class InstanceConverter:
 
 class AssetTreeWidget(QtWidgets.QTreeWidget):
     """Custom tree widget for displaying assets."""
-    
+
     def __init__(self, parent=None):
-        super().__init__(parent)
+        super(AssetTreeWidget, self).__init__(parent)
         
         self.setHeaderLabels([
             "Asset / Reference",
@@ -650,11 +650,11 @@ class AssetTreeWidget(QtWidgets.QTreeWidget):
 
 class ReferenceToInstanceUI(QtWidgets.QDialog):
     """Main UI for Reference to Instance Converter."""
-    
+
     WINDOW_TITLE = "Reference to Instance Converter v2.0"
-    
+
     def __init__(self, parent=get_maya_main_window()):
-        super().__init__(parent)
+        super(ReferenceToInstanceUI, self).__init__(parent)
         
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setMinimumSize(800, 700)
