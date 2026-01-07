@@ -321,4 +321,8 @@ def show_alembic_hold_on_n_ui():
     return dlg
 
 
+# Execute when script is run (either directly or via plugin)
+show_alembic_hold_on_n_ui()
+
+
 
