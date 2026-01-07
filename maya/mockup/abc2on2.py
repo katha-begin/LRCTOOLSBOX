@@ -20,6 +20,12 @@ except:
 
 import maya.OpenMayaUI as omui
 
+# Python 2/3 compatibility
+import sys
+if sys.version_info.major >= 3:
+    long = int
+    basestring = str
+
 
 def maya_main_window():
     ptr = omui.MQtUtil.mainWindow()
