@@ -189,6 +189,34 @@ class LRCInstanceSetBuilderCommand(om.MPxCommand):
             om.MGlobal.displayError(f"❌ Error opening Instance Set Builder tool: {str(e)}")
 
 
+# ============================================================================
+# Alembic Hold On N Command
+# ============================================================================
+
+class LRCAlembicHoldOnNCommand(om.MPxCommand):
+    """Maya command for opening the Alembic Hold On N tool."""
+
+    COMMAND_NAME = "lrcOpenAlembicHoldOnN"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCAlembicHoldOnNCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_alembic_hold_on_n_tool()
+            if result:
+                om.MGlobal.displayInfo("✅ Alembic Hold On N tool opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Alembic Hold On N tool")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Alembic Hold On N tool: {str(e)}")
+
+
 def open_lrc_toolbox():
     """
     Open the LRC Toolbox UI.
@@ -359,6 +387,16 @@ def create_menu():
 
         cmds.menuItem(divider=True, parent=main_menu)
 
+        # Alembic Tools
+        cmds.menuItem(
+            label="Alembic Hold (On N)",
+            command="import maya.cmds as cmds; cmds.lrcOpenAlembicHoldOnN()",
+            annotation="Apply hold-every-N-frames to Alembic caches for animation optimization",
+            parent=main_menu
+        )
+
+        cmds.menuItem(divider=True, parent=main_menu)
+
         cmds.menuItem(
             label="About",
             command=lambda *args: show_about_dialog(),
@@ -449,6 +487,12 @@ def initializePlugin(plugin):
             LRCInstanceSetBuilderCommand.creator
         )
 
+        # Alembic tools commands
+        plugin_fn.registerCommand(
+            LRCAlembicHoldOnNCommand.COMMAND_NAME,
+            LRCAlembicHoldOnNCommand.creator
+        )
+
         # Create menu (delayed to ensure Maya UI is ready)
         cmds.evalDeferred(create_menu)
 
@@ -487,6 +531,9 @@ def uninitializePlugin(plugin):
         plugin_fn.deregisterCommand(LRCCameraBasedAssetCommand.COMMAND_NAME)
         plugin_fn.deregisterCommand(LRCRef2InstanceCommand.COMMAND_NAME)
         plugin_fn.deregisterCommand(LRCInstanceSetBuilderCommand.COMMAND_NAME)
+
+        # Alembic tools commands
+        plugin_fn.deregisterCommand(LRCAlembicHoldOnNCommand.COMMAND_NAME)
 
         print(f"✅ {PLUGIN_NAME} v{PLUGIN_VERSION} unloaded successfully")
 
@@ -774,6 +821,31 @@ def lrc_open_instance_set_builder_tool():
 
     except Exception as e:
         error_msg = f"❌ Failed to open Instance Set Builder tool: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        return None
+
+
+def lrc_open_alembic_hold_on_n_tool():
+    """Open the Alembic Hold On N tool."""
+    try:
+        script_path = _find_mockup_script("abc2on2.py")
+
+        if not script_path:
+            error_msg = "❌ Alembic Hold On N tool script not found (abc2on2.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Alembic Hold On N tool from: {script_path}")
+        exec_command = f'exec(open(r"{script_path}", encoding="utf-8").read())'
+        cmds.evalDeferred(exec_command)
+
+        om.MGlobal.displayInfo("✅ Alembic Hold On N tool opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Alembic Hold On N tool: {str(e)}"
         om.MGlobal.displayError(error_msg)
         print(error_msg)
         return None
