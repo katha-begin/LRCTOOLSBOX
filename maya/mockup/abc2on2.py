@@ -447,7 +447,8 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
         super().__init__(parent)
         self.setObjectName(self.WINDOW_NAME)
         self.setWindowTitle("Alembic Hold (On N) + Keep Travel")
-        self.setMinimumSize(620, 760)
+        self.setMinimumSize(1000, 600)  # Wider for 2-column layout
+        self.resize(1200, 700)  # Default size
 
         self._build_ui()
         self.refresh_tree()
@@ -457,7 +458,7 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
     def _build_ui(self):
         main_layout = QtWidgets.QVBoxLayout(self)
 
-        # Hold settings
+        # Hold settings at top (full width)
         settings_group = QtWidgets.QGroupBox("Hold Settings")
         settings_layout = QtWidgets.QHBoxLayout(settings_group)
 
@@ -479,7 +480,16 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
 
         main_layout.addWidget(settings_group)
 
-        # Tree
+        # 2-Column layout using QSplitter for resizable columns
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        # ============================================================
+        # LEFT COLUMN: Tree view
+        # ============================================================
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
         tree_group = QtWidgets.QGroupBox("AlembicNodes (Grouped by inferred asset namespace)")
         tree_layout = QtWidgets.QVBoxLayout(tree_group)
 
@@ -489,7 +499,28 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
         self.tree.setUniformRowHeights(True)
         tree_layout.addWidget(self.tree)
 
-        main_layout.addWidget(tree_group)
+        left_layout.addWidget(tree_group)
+
+        # Bottom buttons for tree
+        tree_btn_row = QtWidgets.QHBoxLayout()
+        self.apply_all_btn = QtWidgets.QPushButton("Apply Hold to ALL")
+        self.remove_all_btn = QtWidgets.QPushButton("Remove Hold from ALL")
+        self.select_scene_btn = QtWidgets.QPushButton("Select in Scene")
+
+        tree_btn_row.addWidget(self.apply_all_btn)
+        tree_btn_row.addWidget(self.remove_all_btn)
+        tree_btn_row.addWidget(self.select_scene_btn)
+
+        left_layout.addLayout(tree_btn_row)
+
+        splitter.addWidget(left_widget)
+
+        # ============================================================
+        # RIGHT COLUMN: Keep Travel controls
+        # ============================================================
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         # Keep travel group
         kt_group = QtWidgets.QGroupBox("Pose Hold + Keep Travel (2=pose1 but translate to frame2)")
@@ -502,12 +533,14 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
             "Hold scope: Auto from selected vertex namespace",
         ])
         row1.addWidget(self.scope_combo)
+        kt_layout.addLayout(row1)
 
+        row1b = QtWidgets.QHBoxLayout()
         self.apply_constraint_chk = QtWidgets.QCheckBox("Apply constraint to target (move whole character)")
         self.apply_constraint_chk.setChecked(True)
-        row1.addWidget(self.apply_constraint_chk)
-
-        kt_layout.addLayout(row1)
+        row1b.addWidget(self.apply_constraint_chk)
+        row1b.addStretch()
+        kt_layout.addLayout(row1b)
 
         row2 = QtWidgets.QHBoxLayout()
         self.target_combo = QtWidgets.QComboBox()
@@ -516,17 +549,18 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
             "Target: Only this mesh transform",
         ])
         row2.addWidget(self.target_combo)
+        kt_layout.addLayout(row2)
 
-        row2.addWidget(QtWidgets.QLabel("Affect axes:"))
+        row2b = QtWidgets.QHBoxLayout()
+        row2b.addWidget(QtWidgets.QLabel("Affect axes:"))
         self.axis_x = QtWidgets.QCheckBox("X"); self.axis_x.setChecked(True)
         self.axis_y = QtWidgets.QCheckBox("Y"); self.axis_y.setChecked(True)
         self.axis_z = QtWidgets.QCheckBox("Z"); self.axis_z.setChecked(True)
-        row2.addWidget(self.axis_x); row2.addWidget(self.axis_y); row2.addWidget(self.axis_z)
-        row2.addStretch()
+        row2b.addWidget(self.axis_x); row2b.addWidget(self.axis_y); row2b.addWidget(self.axis_z)
+        row2b.addStretch()
+        kt_layout.addLayout(row2b)
 
-        kt_layout.addLayout(row2)
-
-        row3 = QtWidgets.QHBoxLayout()
+        row3 = QtWidgets.QVBoxLayout()
         self.build_keeptravel_btn = QtWidgets.QPushButton("Build Hold + Keep Travel from Selected Vertex")
         self.build_keeptravel_btn.setToolTip("Select ONE vertex on character (pelvis/hip). Builds travel offset + applies hold.")
         self.build_holdonly_from_vertex_btn = QtWidgets.QPushButton("Apply Hold to Vertex Asset (No Travel Fix)")
@@ -540,19 +574,22 @@ class AlembicHoldOnNWindow(QtWidgets.QDialog):
         self.status_label.setWordWrap(True)
         kt_layout.addWidget(self.status_label)
 
-        main_layout.addWidget(kt_group)
+        right_layout.addWidget(kt_group)
+        right_layout.addStretch()
 
-        # Bottom buttons
+        splitter.addWidget(right_widget)
+
+        # Set initial splitter sizes (40% left, 60% right)
+        splitter.setSizes([400, 600])
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 6)
+
+        main_layout.addWidget(splitter)
+
+        # Bottom buttons (full width)
         btn_row = QtWidgets.QHBoxLayout()
-        self.apply_all_btn = QtWidgets.QPushButton("Apply Hold to ALL")
-        self.remove_all_btn = QtWidgets.QPushButton("Remove Hold from ALL")
-        self.select_scene_btn = QtWidgets.QPushButton("Select AlembicNodes in Scene")
         self.close_btn = QtWidgets.QPushButton("Close")
-
-        btn_row.addWidget(self.apply_all_btn)
-        btn_row.addWidget(self.remove_all_btn)
         btn_row.addStretch()
-        btn_row.addWidget(self.select_scene_btn)
         btn_row.addWidget(self.close_btn)
 
         main_layout.addLayout(btn_row)
