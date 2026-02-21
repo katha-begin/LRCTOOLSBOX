@@ -290,7 +290,11 @@ class RenderSetupUI(QtWidgets.QMainWindow):
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
         # Set window icon (placeholder - will be enhanced later)
-        self.setWindowIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon))
+        # NOTE: Removed self.style().standardIcon() call to fix QProxyStyle error
+        # This line caused "Internal C++ object already deleted" error during Maya docking
+        # because Qt's style object gets deleted when ownership transfers to Maya's dock system.
+        # Icon will be added in future version using custom icon file.
+        # self.setWindowIcon(self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon))
 
         # Ensure proper font rendering for Unicode/emoji
         self._setup_unicode_font()

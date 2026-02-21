@@ -3,11 +3,15 @@ LRC Toolbox Main Entry Point
 
 This module provides the main entry point for the LRC Toolbox application.
 It handles Maya integration, UI creation, and application lifecycle.
+
+Python 2.7 and 3.x compatible.
 """
+
+from __future__ import print_function
+from __future__ import absolute_import
 
 import sys
 import os
-from typing import Optional
 
 # Add the maya directory to Python path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,33 +31,37 @@ except ImportError:
     try:
         from PySide2 import QtWidgets, QtCore
     except ImportError:
-        from PySide6 import QtWidgets, QtCore
+        try:
+            from PySide6 import QtWidgets, QtCore
+        except ImportError:
+            QtWidgets = None
+            QtCore = None
     MAYA_AVAILABLE = False
 
 from lrc_toolbox.ui.main_window import RenderSetupUI
 
 
-def get_maya_main_window() -> Optional[QtWidgets.QWidget]:
+def get_maya_main_window():
     """
     Get Maya's main window as a Qt widget.
-    
+
     Returns:
         Maya main window widget or None if not available
     """
     if not MAYA_AVAILABLE:
         return None
-        
+
     try:
         main_window_ptr = omui.MQtUtil.mainWindow()
         if main_window_ptr:
             return wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
     except Exception as e:
-        print(f"Warning: Could not get Maya main window: {e}")
-    
+        print("Warning: Could not get Maya main window: {0}".format(e))
+
     return None
 
 
-def create_dockable_ui() -> Optional[QtWidgets.QWidget]:
+def create_dockable_ui():
     """
     Create and dock the LRC Toolbox UI in Maya.
 
@@ -89,11 +97,13 @@ def create_dockable_ui() -> Optional[QtWidgets.QWidget]:
         return ui
 
     except Exception as e:
-        print(f"ERROR: Error creating dockable UI: {e}")
+        print("ERROR: Error creating dockable UI: {0}".format(e))
+        import traceback
+        traceback.print_exc()
         return None
 
 
-def create_standalone_ui() -> Optional[QtWidgets.QWidget]:
+def create_standalone_ui():
     """
     Create a standalone LRC Toolbox window.
 
@@ -114,7 +124,9 @@ def create_standalone_ui() -> Optional[QtWidgets.QWidget]:
         return ui
 
     except Exception as e:
-        print(f"ERROR: Error creating standalone UI: {e}")
+        print("ERROR: Error creating standalone UI: {0}".format(e))
+        import traceback
+        traceback.print_exc()
         return None
 
 

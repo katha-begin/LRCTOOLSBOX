@@ -217,6 +217,54 @@ class LRCAlembicHoldOnNCommand(om.MPxCommand):
             om.MGlobal.displayError(f"❌ Error opening Alembic Hold On N tool: {str(e)}")
 
 
+class LRCLightManagerCommand(om.MPxCommand):
+    """Maya command for opening the Light Manager (Arnold & Redshift)."""
+
+    COMMAND_NAME = "lrcOpenLightManager"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCLightManagerCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_light_manager()
+            if result:
+                om.MGlobal.displayInfo("✅ Light Manager opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Light Manager")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Light Manager: {str(e)}")
+
+
+class LRCTextureProcCommand(om.MPxCommand):
+    """Maya command for opening the Redshift Texture Processor."""
+
+    COMMAND_NAME = "lrcOpenTextureProc"
+
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def creator():
+        return LRCTextureProcCommand()
+
+    def doIt(self, args):
+        """Execute the command."""
+        try:
+            result = lrc_open_texture_proc()
+            if result:
+                om.MGlobal.displayInfo("✅ Redshift Texture Processor opened successfully")
+            else:
+                om.MGlobal.displayError("❌ Failed to open Redshift Texture Processor")
+        except Exception as e:
+            om.MGlobal.displayError(f"❌ Error opening Redshift Texture Processor: {str(e)}")
+
+
 def open_lrc_toolbox():
     """
     Open the LRC Toolbox UI.
@@ -387,7 +435,27 @@ def create_menu():
 
         cmds.menuItem(divider=True, parent=main_menu)
 
-        # Alembic Tools
+        # Lighting Tools Section
+        cmds.menuItem(
+            label="Light Manager",
+            command="import maya.cmds as cmds; cmds.lrcOpenLightManager()",
+            annotation="Manage Arnold & Redshift lights and light groups",
+            parent=main_menu
+        )
+
+        cmds.menuItem(divider=True, parent=main_menu)
+
+        # Texture Tools Section
+        cmds.menuItem(
+            label="Redshift Texture Processor",
+            command="import maya.cmds as cmds; cmds.lrcOpenTextureProc()",
+            annotation="Batch convert textures using Redshift Texture Processor with OCIO support",
+            parent=main_menu
+        )
+
+        cmds.menuItem(divider=True, parent=main_menu)
+
+        # Alembic Tools Section
         cmds.menuItem(
             label="Alembic Hold (On N)",
             command="import maya.cmds as cmds; cmds.lrcOpenAlembicHoldOnN()",
@@ -493,12 +561,24 @@ def initializePlugin(plugin):
             LRCAlembicHoldOnNCommand.creator
         )
 
+        # Lighting tools commands
+        plugin_fn.registerCommand(
+            LRCLightManagerCommand.COMMAND_NAME,
+            LRCLightManagerCommand.creator
+        )
+
+        # Texture tools commands
+        plugin_fn.registerCommand(
+            LRCTextureProcCommand.COMMAND_NAME,
+            LRCTextureProcCommand.creator
+        )
+
         # Create menu (delayed to ensure Maya UI is ready)
         cmds.evalDeferred(create_menu)
 
         print(f"✅ {PLUGIN_NAME} v{PLUGIN_VERSION} loaded successfully")
         print(f"📋 Access via: LRC Toolbox menu or lrcToolboxOpen() command")
-        
+
     except Exception as e:
         om.MGlobal.displayError(f"❌ Failed to initialize {PLUGIN_NAME}: {str(e)}")
         raise
@@ -534,6 +614,12 @@ def uninitializePlugin(plugin):
 
         # Alembic tools commands
         plugin_fn.deregisterCommand(LRCAlembicHoldOnNCommand.COMMAND_NAME)
+
+        # Lighting tools commands
+        plugin_fn.deregisterCommand(LRCLightManagerCommand.COMMAND_NAME)
+
+        # Texture tools commands
+        plugin_fn.deregisterCommand(LRCTextureProcCommand.COMMAND_NAME)
 
         print(f"✅ {PLUGIN_NAME} v{PLUGIN_VERSION} unloaded successfully")
 
@@ -848,6 +934,76 @@ def lrc_open_alembic_hold_on_n_tool():
         error_msg = f"❌ Failed to open Alembic Hold On N tool: {str(e)}"
         om.MGlobal.displayError(error_msg)
         print(error_msg)
+        return None
+
+
+# ============================================================================
+# Lighting Tools Functions
+# ============================================================================
+
+def lrc_open_light_manager():
+    """Open the Light Manager (Arnold & Redshift Light Renamer)."""
+    try:
+        script_path = _find_mockup_script("arnold_light_renamer.py")
+
+        if not script_path:
+            error_msg = "❌ Light Manager script not found (arnold_light_renamer.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Light Manager from: {script_path}")
+
+        # Import and execute the show_ui function
+        mockup_dir = os.path.dirname(script_path)
+        if mockup_dir not in sys.path:
+            sys.path.insert(0, mockup_dir)
+
+        import arnold_light_renamer
+        arnold_light_renamer.show_ui()
+
+        om.MGlobal.displayInfo("✅ Light Manager opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Light Manager: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def lrc_open_texture_proc():
+    """Open the Redshift Texture Processor GUI."""
+    try:
+        script_path = _find_mockup_script("rs_texproc_maya_gui.py")
+
+        if not script_path:
+            error_msg = "❌ Redshift Texture Processor script not found (rs_texproc_maya_gui.py)"
+            om.MGlobal.displayError(error_msg)
+            print(error_msg)
+            return None
+
+        print(f"🚀 Opening Redshift Texture Processor from: {script_path}")
+
+        # Import and execute the show function
+        mockup_dir = os.path.dirname(script_path)
+        if mockup_dir not in sys.path:
+            sys.path.insert(0, mockup_dir)
+
+        import rs_texproc_maya_gui
+        rs_texproc_maya_gui.show_rs_texproc_maya_ui()
+
+        om.MGlobal.displayInfo("✅ Redshift Texture Processor opened")
+        return True
+
+    except Exception as e:
+        error_msg = f"❌ Failed to open Redshift Texture Processor: {str(e)}"
+        om.MGlobal.displayError(error_msg)
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
         return None
 
 

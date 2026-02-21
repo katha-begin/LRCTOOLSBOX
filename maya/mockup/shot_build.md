@@ -15,12 +15,13 @@ Setdress =SDRS
 Sets = SETS
 
 7. file name is {name}_rsshade.ma for shader and {name}_groom.ma namespace is {catagory}_{name}_{identifier}_shade abd {catagory}_{name}_{identifier}_groom
-8. before import reference
+8. before create reference
 9. check current scene and ask user to start new scene , replace references with same name but new shot or remove all and import all from the shot select
 10. if user select new, create empty group name Camera_Grp, Character_Grp, Setdress_Grp, Props_Grp, Sets_Grp
 11. Always Start with Sets, Only cache with prefix "SETS" we will import alembic to the scene and we will get the locator with transform. We need to reference their component to the shot. ex. locator name is SETS_KitBedRoomInt_001:KBDIntCelling_001_Loc, We need to split ":" and look for asset name KBDIntCelling_001 in our asset list and reference {name0}_geo.abc to the shot. then we need to trans form to SETS_KitBedRoomInt_001:KBDIntCelling_001_Loc by get the TRS fromthe locator inmemory and aset locator to origin then parent the asset to the locator then apply the TRS back to locator the reason is we need to keep asset transform at origin. We loop this process until all locator is match with asset in our list. 
-12 . We continue with other asset and move them to their group.
-13 then we reference the shader and groom to the shot.
+
+12. We continue with other asset and move them to their group.
+13. then we reference the shader and groom to the shot.
 14. We will assign shader to the asset by namespace. with the function in igl_shot_build.py
 15. We will create blendshape for character by using the function in igl_shot_build.py
 16. We will use Place3D Linker to connect the shader to the asset by using the function in igl_shot_build.py for character

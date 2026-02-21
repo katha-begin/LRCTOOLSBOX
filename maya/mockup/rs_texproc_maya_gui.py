@@ -1,0 +1,884 @@
+# rs_texproc_maya_gui.py
+# -*- coding: utf-8 -*-
+"""
+Maya GUI: Batch convert textures using Redshift Texture Processor.
+
+Features:
+- Output saved next to source by default (no -path).
+- OCIO config path from env OCIO, with default fallback.
+- Use OCIO file_rules (-useociorules) OR GUI rule mapping (-cs per file).
+- Skip if output exists (default ON). If OFF, force with -noskip.
+"""
+
+import os
+import fnmatch
+import subprocess
+from pathlib import Path
+
+import maya.cmds as cmds
+from PySide2 import QtWidgets, QtCore, QtGui
+
+DEFAULT_OCIO = "T:/pipeline/ocio/aces_2.0/studio-config-v1.0.0_aces-v1.3_ocio-v2.0.ocio"
+
+# Default rules for colorspace mapping
+DEFAULT_RULES = [
+    # name,        glob pattern,           extensions,           colorspace (must exist in active config)
+    ("DIFFUSE",    "*[dD]iffuse*",         "*",                  "Utility - sRGB - Texture"),
+    ("BASECOLOR",  "*[bB]ase[cC]olor*",    "*",                  "Utility - sRGB - Texture"),
+    ("EMISSIVE",   "*[eE]missive*",        "*",                  "Utility - sRGB - Texture"),
+    ("MATTPAINT",  "*",                    "jpg jpeg",           "Utility - sRGB - Texture"),
+    ("EXR",        "*",                    "exr",                "ACES - ACEScg"),
+    ("HDR",        "*",                    "hdr",                "Utility - Linear - Rec.709"),
+    ("Default",    "*",                    "*",                  "Utility - Raw"),
+]
+
+# Texture node types and their file attributes (from tex_dedup.py)
+TEXTURE_NODE_TYPES = {
+    'file': 'fileTextureName',
+    'aiImage': 'filename',
+    'RedshiftNormalMap': 'tex0',
+    'RedshiftSprite': 'tex0',
+    'RedshiftDomeLight': 'tex0',
+    'PxrTexture': 'filename',
+    'PxrNormalMap': 'filename',
+}
+
+
+def _norm(p: str) -> str:
+    return p.replace("\\", "/")
+
+
+def _ocio_from_env_or_default() -> str:
+    ocio = (os.environ.get("OCIO") or "").strip()
+    return ocio if ocio else DEFAULT_OCIO
+
+
+def _guess_texproc_exe() -> str:
+    # Common Win locations; user can browse if different
+    candidates = [
+        r"C:\ProgramData\Redshift\bin\redshiftTextureProcessor.exe",
+        r"C:\ProgramData\redshift\bin\redshiftTextureProcessor.exe",
+        r"C:\ProgramData\Redshift\bin\redshiftTextureProcessor",
+        r"C:\ProgramData\redshift\bin\redshiftTextureProcessor",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return ""
+
+
+def _collect_files(inputs: list, recursive: bool) -> list:
+    out = []
+    for it in inputs:
+        if not it:
+            continue
+        p = Path(it)
+        if p.is_file():
+            out.append(str(p))
+        elif p.is_dir():
+            if recursive:
+                out.extend([str(f) for f in p.rglob("*") if f.is_file()])
+            else:
+                out.extend([str(f) for f in p.glob("*") if f.is_file()])
+
+    # de-dupe preserving order
+    seen = set()
+    uniq = []
+    for f in out:
+        k = os.path.normcase(os.path.abspath(f))
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(f)
+    return uniq
+
+
+def _match_rule_colorspace(filepath: str, rules=None) -> str:
+    """Apply RULES (glob over basename/stem) with extension constraints."""
+    if rules is None:
+        rules = DEFAULT_RULES
+
+    p = Path(filepath)
+    basename = p.name
+    stem = p.stem
+    ext = p.suffix.lower().lstrip(".")
+
+    for rule_name, pattern, exts, cs in rules:
+        exts_norm = exts.strip().lower()
+
+        # extension filter
+        if exts_norm != "*":
+            allowed = set(exts_norm.split())
+            if ext not in allowed:
+                continue
+
+        # glob match
+        if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(stem, pattern):
+            return cs
+
+    return "Utility - Raw"
+
+
+def _expected_rstexbin_path(src_file: str, out_dir: str = "") -> str:
+    """
+    Predict output .rstexbin path.
+    If out_dir empty -> next to source: <src>.rstexbin
+    If out_dir set  -> <out_dir>/<basename>.rstexbin
+    """
+    src = Path(src_file)
+    if out_dir:
+        return str(Path(out_dir) / (src.name + ".rstexbin"))
+    return str(Path(str(src)) .with_name(src.name + ".rstexbin"))
+
+
+def _build_cmd(texproc_exe: str, in_file: str, ocio_file: str,
+               use_ocio_rules: bool, out_dir: str,
+               colorspace: str, write_log: bool, force: bool) -> list:
+    """
+    Build redshiftTextureProcessor command.
+    - If out_dir empty => omit -path => output next to source.
+    - If force True => pass -noskip (reprocess).
+    """
+    texproc_exe = _norm(texproc_exe)
+    in_file = _norm(in_file)
+    ocio_file = _norm(ocio_file)
+
+    ocio_dir = _norm(str(Path(ocio_file).parent))
+
+    cmd = [texproc_exe, in_file]
+
+    if out_dir:
+        cmd += ["-path", _norm(out_dir)]
+
+    # OCIO: doc uses -ociopath as folder; env OCIO as file also works.
+    cmd += ["-ociopath", ocio_dir]
+
+    if use_ocio_rules:
+        cmd += ["-useociorules"]
+    else:
+        cmd += ["-cs", colorspace]
+
+    if write_log:
+        cmd += ["-log"]
+
+    if force:
+        cmd += ["-noskip"]
+
+    return cmd
+
+
+def _scan_scene_textures():
+    """
+    Scan the entire Maya scene for all texture files.
+    Returns list of tuples: (texture_path, node_name, node_type, has_rstexbin)
+    """
+    textures = []
+    seen_paths = set()
+
+    for node_type, attr_name in TEXTURE_NODE_TYPES.items():
+        try:
+            nodes = cmds.ls(type=node_type) or []
+            for node in nodes:
+                full_attr = f"{node}.{attr_name}"
+
+                if not cmds.objExists(full_attr):
+                    continue
+
+                try:
+                    tex_path = cmds.getAttr(full_attr) or ""
+                except:
+                    tex_path = ""
+
+                if not tex_path:
+                    continue
+
+                # Normalize path
+                tex_path_norm = _norm(tex_path)
+
+                # Check if already seen
+                path_key = os.path.normcase(os.path.abspath(tex_path_norm))
+                if path_key in seen_paths:
+                    continue
+                seen_paths.add(path_key)
+
+                # Check if .rstexbin exists
+                rstexbin_path = tex_path_norm + ".rstexbin"
+                has_rstexbin = os.path.exists(rstexbin_path)
+
+                textures.append((tex_path_norm, node, node_type, has_rstexbin))
+
+        except Exception as e:
+            print(f"Error scanning {node_type}: {e}")
+            continue
+
+    return textures
+
+
+class ConversionWorker(QtCore.QThread):
+    """Worker thread for running texture conversions without freezing Maya."""
+
+    # Signals
+    progress_updated = QtCore.Signal(int, int, str)  # current, total, message
+    conversion_finished = QtCore.Signal(int, int)  # success_count, total_count
+    log_message = QtCore.Signal(str)  # log message
+
+    def __init__(self, plan, env, parent=None):
+        super().__init__(parent)
+        self.plan = plan
+        self.env = env
+        self.to_run = [x for x in plan if not x["skipped"]]
+        self._is_cancelled = False
+
+    def cancel(self):
+        """Cancel the conversion process."""
+        self._is_cancelled = True
+
+    def run(self):
+        """Run the conversion process in a separate thread."""
+        ok = 0
+        total = len(self.to_run)
+
+        self.log_message.emit("\n--- RUN ---")
+        self.log_message.emit(f"Running: {total} | Skipping: {len(self.plan)-total}")
+
+        for idx, item in enumerate(self.to_run):
+            if self._is_cancelled:
+                self.log_message.emit("\n❌ Conversion cancelled by user.")
+                break
+
+            cmdline = item["cmd"]
+            src_file = item["src"]
+
+            # Update progress
+            self.progress_updated.emit(idx + 1, total, f"Processing: {os.path.basename(src_file)}")
+
+            try:
+                startupinfo = None
+                if os.name == "nt":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                res = subprocess.run(
+                    cmdline,
+                    env=self.env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    startupinfo=startupinfo,
+                )
+
+                out = (res.stdout or "").strip()
+                if out:
+                    self.log_message.emit(out)
+
+                if res.returncode == 0:
+                    ok += 1
+                    self.log_message.emit(f"✅ [{idx+1}/{total}] {os.path.basename(src_file)}")
+                else:
+                    self.log_message.emit(f"❌ ERROR: return code {res.returncode} | {src_file}")
+
+            except Exception as e:
+                self.log_message.emit(f"❌ ERROR running command: {e}")
+
+        self.log_message.emit(f"\n✅ Done. Success: {ok}/{total}")
+        self.conversion_finished.emit(ok, total)
+
+
+class RSTextureProcessorMayaUI(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Redshift Texture Processor Batch (Maya)")
+        self.setMinimumWidth(860)
+
+        # --- Paths ---
+        self.ed_texproc = QtWidgets.QLineEdit(_guess_texproc_exe())
+        self.btn_texproc = QtWidgets.QPushButton("Browse…")
+
+        self.ed_ocio = QtWidgets.QLineEdit(_ocio_from_env_or_default())
+        self.btn_ocio = QtWidgets.QPushButton("Browse…")
+
+        # --- Mode ---
+        self.rb_ocio = QtWidgets.QRadioButton("Use OCIO file_rules (-useociorules)  [recommended]")
+        self.rb_gui = QtWidgets.QRadioButton("Use GUI RULES (map → -cs per file)")
+        self.rb_ocio.setChecked(True)
+
+        # --- Output behavior (default next to source) ---
+        self.chk_custom_out = QtWidgets.QCheckBox("Custom output folder (-path)")
+        self.chk_custom_out.setChecked(False)
+        self.ed_out = QtWidgets.QLineEdit("")
+        self.ed_out.setEnabled(False)
+        self.btn_out = QtWidgets.QPushButton("Browse…")
+        self.btn_out.setEnabled(False)
+        self.lbl_out_hint = QtWidgets.QLabel("Default: output is saved next to the source image.")
+
+        # --- Options ---
+        self.chk_recursive = QtWidgets.QCheckBox("Recursive (folders)")
+        self.chk_recursive.setChecked(True)
+
+        # Simplified skip checkbox (checked = skip, unchecked = force with -noskip)
+        self.chk_skip_exist = QtWidgets.QCheckBox("Skip if .rstexbin already exists")
+        self.chk_skip_exist.setChecked(True)  # <-- default skip ON
+        self.chk_skip_exist.setToolTip("When checked: skip existing files. When unchecked: force reprocess with -noskip")
+
+        self.chk_log = QtWidgets.QCheckBox("Write log (-log)")
+        self.chk_log.setChecked(True)
+
+        # --- Update Scene Option ---
+        self.chk_update_scene = QtWidgets.QCheckBox("Update scene file nodes to .rstexbin after conversion")
+        self.chk_update_scene.setChecked(False)
+        self.chk_update_scene.setToolTip("After conversion, update Maya file nodes to point to .rstexbin files")
+
+        # --- Inputs Table (replaces list widget) ---
+        self.table_inputs = QtWidgets.QTableWidget()
+        self.table_inputs.setColumnCount(4)
+        self.table_inputs.setHorizontalHeaderLabels(["Texture Path", "Node", "Type", ".rstexbin"])
+        self.table_inputs.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table_inputs.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.table_inputs.setAlternatingRowColors(True)
+        self.table_inputs.horizontalHeader().setStretchLastSection(False)
+        self.table_inputs.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.table_inputs.setColumnWidth(1, 150)
+        self.table_inputs.setColumnWidth(2, 100)
+        self.table_inputs.setColumnWidth(3, 80)
+
+        self.btn_add_files = QtWidgets.QPushButton("Add Files…")
+        self.btn_add_folder = QtWidgets.QPushButton("Add Folder…")
+        self.btn_add_from_scene = QtWidgets.QPushButton("Add From Scene (All Textures)")
+        self.btn_remove = QtWidgets.QPushButton("Remove Selected")
+        self.btn_clear = QtWidgets.QPushButton("Clear")
+
+        # --- Actions ---
+        self.btn_preview = QtWidgets.QPushButton("Preview")
+        self.btn_run = QtWidgets.QPushButton("Run Conversion")
+        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_cancel.setEnabled(False)
+
+        # --- Progress Bar ---
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        self.lbl_progress = QtWidgets.QLabel("")
+        self.lbl_progress.setVisible(False)
+
+        self.txt_log = QtWidgets.QPlainTextEdit()
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setMaximumHeight(240)
+
+        # Worker thread
+        self.worker = None
+
+        # Rules (start with defaults, can be edited in Rules tab)
+        self.rules = list(DEFAULT_RULES)
+
+        # --- Create Tab Widget ---
+        self.tab_widget = QtWidgets.QTabWidget()
+
+        # Main Tab
+        main_tab = QtWidgets.QWidget()
+        self._create_main_tab_layout(main_tab)
+        self.tab_widget.addTab(main_tab, "Conversion")
+
+        # Rules Tab
+        rules_tab = QtWidgets.QWidget()
+        self._create_rules_tab_layout(rules_tab)
+        self.tab_widget.addTab(rules_tab, "Rules Config")
+
+        # Main layout
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.addWidget(self.tab_widget)
+
+        # --- Signals ---
+        self.btn_texproc.clicked.connect(self._browse_texproc)
+        self.btn_ocio.clicked.connect(self._browse_ocio)
+        self.chk_custom_out.toggled.connect(self._toggle_out)
+        self.btn_out.clicked.connect(self._browse_out)
+
+        self.btn_add_files.clicked.connect(self._add_files)
+        self.btn_add_folder.clicked.connect(self._add_folder)
+        self.btn_add_from_scene.clicked.connect(self._add_from_scene)
+        self.btn_remove.clicked.connect(self._remove_selected)
+        self.btn_clear.clicked.connect(self._clear_table)
+
+        self.btn_preview.clicked.connect(self._preview)
+        self.btn_run.clicked.connect(self._run)
+        self.btn_cancel.clicked.connect(self._cancel_conversion)
+
+    def _create_main_tab_layout(self, parent):
+        """Create the main conversion tab layout."""
+        form = QtWidgets.QFormLayout()
+
+        row1 = QtWidgets.QHBoxLayout()
+        row1.addWidget(self.ed_texproc)
+        row1.addWidget(self.btn_texproc)
+        form.addRow("redshiftTextureProcessor:", row1)
+
+        row2 = QtWidgets.QHBoxLayout()
+        row2.addWidget(self.ed_ocio)
+        row2.addWidget(self.btn_ocio)
+        form.addRow("OCIO config (.ocio):", row2)
+
+        modes = QtWidgets.QHBoxLayout()
+        modes.addWidget(self.rb_ocio)
+        modes.addWidget(self.rb_gui)
+        form.addRow("Mode:", modes)
+
+        outrow = QtWidgets.QHBoxLayout()
+        outrow.addWidget(self.chk_custom_out)
+        outrow.addWidget(self.ed_out)
+        outrow.addWidget(self.btn_out)
+        form.addRow("Output:", outrow)
+        form.addRow("", self.lbl_out_hint)
+
+        opts = QtWidgets.QHBoxLayout()
+        opts.addWidget(self.chk_recursive)
+        opts.addStretch(1)
+        opts.addWidget(self.chk_skip_exist)
+        opts.addWidget(self.chk_log)
+        form.addRow("Options:", opts)
+
+        # Update scene option
+        form.addRow("", self.chk_update_scene)
+
+        btns = QtWidgets.QHBoxLayout()
+        btns.addWidget(self.btn_add_files)
+        btns.addWidget(self.btn_add_folder)
+        btns.addWidget(self.btn_add_from_scene)
+        btns.addWidget(self.btn_remove)
+        btns.addWidget(self.btn_clear)
+        btns.addStretch(1)
+        btns.addWidget(self.btn_preview)
+        btns.addWidget(self.btn_run)
+        btns.addWidget(self.btn_cancel)
+
+        main = QtWidgets.QVBoxLayout(parent)
+        main.addLayout(form)
+        main.addWidget(QtWidgets.QLabel("Inputs:"))
+        main.addWidget(self.table_inputs)
+        main.addLayout(btns)
+
+        # Progress section
+        main.addWidget(self.lbl_progress)
+        main.addWidget(self.progress_bar)
+        main.addWidget(QtWidgets.QLabel("Log / Preview:"))
+        main.addWidget(self.txt_log)
+
+    def _create_rules_tab_layout(self, parent):
+        """Create the rules configuration tab layout."""
+        # Rules table
+        self.table_rules = QtWidgets.QTableWidget()
+        self.table_rules.setColumnCount(4)
+        self.table_rules.setHorizontalHeaderLabels(["Name", "Glob Pattern", "Extensions", "Colorspace"])
+        self.table_rules.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table_rules.setAlternatingRowColors(True)
+        self.table_rules.horizontalHeader().setStretchLastSection(True)
+        self.table_rules.setColumnWidth(0, 120)
+        self.table_rules.setColumnWidth(1, 150)
+        self.table_rules.setColumnWidth(2, 100)
+
+        # Populate with default rules
+        self._populate_rules_table()
+
+        # Buttons
+        btn_add_rule = QtWidgets.QPushButton("Add Rule")
+        btn_remove_rule = QtWidgets.QPushButton("Remove Selected")
+        btn_reset_rules = QtWidgets.QPushButton("Reset to Defaults")
+        btn_move_up = QtWidgets.QPushButton("Move Up")
+        btn_move_down = QtWidgets.QPushButton("Move Down")
+
+        btn_add_rule.clicked.connect(self._add_rule)
+        btn_remove_rule.clicked.connect(self._remove_rule)
+        btn_reset_rules.clicked.connect(self._reset_rules)
+        btn_move_up.clicked.connect(self._move_rule_up)
+        btn_move_down.clicked.connect(self._move_rule_down)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addWidget(btn_add_rule)
+        btn_layout.addWidget(btn_remove_rule)
+        btn_layout.addWidget(btn_move_up)
+        btn_layout.addWidget(btn_move_down)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_reset_rules)
+
+        info_label = QtWidgets.QLabel(
+            "Rules are applied in order from top to bottom. First matching rule wins.\n"
+            "Use '*' for any pattern/extension. Glob patterns: * (any), ? (single char), [abc] (char set)"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("QLabel { color: #666; font-style: italic; }")
+
+        layout = QtWidgets.QVBoxLayout(parent)
+        layout.addWidget(info_label)
+        layout.addWidget(self.table_rules)
+        layout.addLayout(btn_layout)
+
+    # ---------- helpers ----------
+    def _log(self, msg: str):
+        self.txt_log.appendPlainText(msg)
+
+    def _toggle_out(self, on: bool):
+        self.ed_out.setEnabled(on)
+        self.btn_out.setEnabled(on)
+        if not on:
+            self.ed_out.setText("")
+
+    def _browse_texproc(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select redshiftTextureProcessor", "", "Executable (*)")
+        if p:
+            self.ed_texproc.setText(_norm(p))
+
+    def _browse_ocio(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select OCIO config", "", "OCIO config (*.ocio)")
+        if p:
+            self.ed_ocio.setText(_norm(p))
+
+    def _browse_out(self):
+        p = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output folder")
+        if p:
+            self.ed_out.setText(_norm(p))
+
+    def _add_files(self):
+        """Add files from file dialog."""
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Add textures", "", "Images (*.*)")
+        for f in files:
+            self._add_texture_to_table(_norm(f), "", "manual", False)
+
+    def _add_folder(self):
+        """Add folder path to table (will be expanded during collection)."""
+        p = QtWidgets.QFileDialog.getExistingDirectory(self, "Add folder")
+        if p:
+            self._add_texture_to_table(_norm(p), "", "folder", False)
+
+    def _add_from_scene(self):
+        """Scan entire Maya scene for ALL texture files."""
+        self._log("Scanning scene for textures...")
+
+        textures = _scan_scene_textures()
+
+        if not textures:
+            self._log("No textures found in scene.")
+            return
+
+        # Add to table
+        for tex_path, node, node_type, has_rstexbin in textures:
+            self._add_texture_to_table(tex_path, node, node_type, has_rstexbin)
+
+        self._log(f"Added {len(textures)} textures from scene (all node types).")
+
+    def _add_texture_to_table(self, path, node, node_type, has_rstexbin):
+        """Add a texture entry to the table."""
+        # Check if already exists
+        for row in range(self.table_inputs.rowCount()):
+            if self.table_inputs.item(row, 0).text() == path:
+                return  # Already exists
+
+        row = self.table_inputs.rowCount()
+        self.table_inputs.insertRow(row)
+
+        self.table_inputs.setItem(row, 0, QtWidgets.QTableWidgetItem(path))
+        self.table_inputs.setItem(row, 1, QtWidgets.QTableWidgetItem(node))
+        self.table_inputs.setItem(row, 2, QtWidgets.QTableWidgetItem(node_type))
+
+        status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
+        status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        if has_rstexbin:
+            status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+        else:
+            status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+        self.table_inputs.setItem(row, 3, status_item)
+
+    def _clear_table(self):
+        """Clear all entries from the table."""
+        self.table_inputs.setRowCount(0)
+
+    def _remove_selected(self):
+        """Remove selected rows from the table."""
+        selected_rows = set()
+        for item in self.table_inputs.selectedItems():
+            selected_rows.add(item.row())
+
+        for row in sorted(selected_rows, reverse=True):
+            self.table_inputs.removeRow(row)
+
+    def _gather(self):
+        texproc = self.ed_texproc.text().strip()
+        ocio = self.ed_ocio.text().strip()
+
+        out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
+
+        recursive = self.chk_recursive.isChecked()
+        use_ocio_rules = self.rb_ocio.isChecked()
+
+        skip_exist = self.chk_skip_exist.isChecked()
+        force = not skip_exist  # Simplified: unchecked = force
+
+        write_log = self.chk_log.isChecked()
+
+        # Collect from table (column 0 = texture path)
+        inputs = []
+        for row in range(self.table_inputs.rowCount()):
+            path_item = self.table_inputs.item(row, 0)
+            if path_item:
+                inputs.append(path_item.text())
+
+        files = _collect_files(inputs, recursive=recursive)
+
+        return texproc, ocio, out_dir, use_ocio_rules, skip_exist, force, write_log, files
+
+    def _make_cmds_and_plan(self):
+        texproc, ocio, out_dir, use_ocio_rules, skip_exist, force, write_log, files = self._gather()
+
+        plan = []  # list of dicts: {src, out, cs, cmd, skipped}
+        for f in files:
+            cs = "" if use_ocio_rules else _match_rule_colorspace(f, self.rules)
+            out_path = _expected_rstexbin_path(f, out_dir=out_dir)
+            out_exists = os.path.exists(out_path)
+
+            skipped = bool(skip_exist and out_exists)
+            cmdline = _build_cmd(
+                texproc_exe=texproc,
+                in_file=f,
+                ocio_file=ocio,
+                use_ocio_rules=use_ocio_rules,
+                out_dir=out_dir,
+                colorspace=cs,
+                write_log=write_log,
+                force=force,
+            )
+            plan.append(dict(src=f, out=out_path, cs=cs, cmd=cmdline, skipped=skipped))
+
+        return plan
+
+    # ---------- actions ----------
+    def _preview(self):
+        self.txt_log.clear()
+        texproc, ocio, out_dir, use_ocio_rules, skip_exist, force, write_log, files = self._gather()
+
+        if not texproc or not os.path.exists(texproc):
+            self._log(f"ERROR: redshiftTextureProcessor not found: {texproc}")
+            return
+        if not ocio or not os.path.exists(ocio):
+            self._log(f"ERROR: OCIO config not found: {ocio}")
+            return
+
+        self._log(f"OCIO file : {ocio}")
+        self._log(f"OCIO dir  : {Path(ocio).parent}")
+        self._log(f"Mode      : {'OCIO file_rules (-useociorules)' if use_ocio_rules else 'GUI RULES (-cs per file)'}")
+        self._log(f"Output    : {'Next to source (default)' if not out_dir else out_dir}")
+        self._log(f"Recursive : {self.chk_recursive.isChecked()}")
+        self._log(f"Skip exist: {skip_exist}")
+        self._log(f"Force     : {force}  (applies only if Skip exist is OFF)")
+        self._log(f"Files     : {len(files)}")
+        self._log("")
+
+        plan = self._make_cmds_and_plan()
+        shown = 0
+        for item in plan:
+            if shown >= 60:
+                break
+            tag = "[SKIP]" if item["skipped"] else "     "
+            cmd_str = " ".join([f'"{x}"' if " " in x else x for x in item["cmd"]])
+            if use_ocio_rules:
+                self._log(f"{tag} {cmd_str}")
+            else:
+                self._log(f"{tag} -cs \"{item['cs']}\" | {cmd_str}")
+            shown += 1
+
+        skipped_count = sum(1 for x in plan if x["skipped"])
+        if len(plan) > shown:
+            self._log(f"... ({len(plan)-shown} more)")
+        self._log(f"\nPlanned: {len(plan)} | Skipped: {skipped_count} | Will run: {len(plan)-skipped_count}")
+
+    def _cancel_conversion(self):
+        """Cancel the running conversion."""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self._log("\n⚠️ Cancelling conversion...")
+
+    def _on_progress_updated(self, current, total, message):
+        """Update progress bar and label."""
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(current)
+        self.lbl_progress.setText(f"{message} ({current}/{total})")
+
+    def _on_log_message(self, message):
+        """Append log message from worker thread."""
+        self.txt_log.appendPlainText(message)
+
+    def _on_conversion_finished(self, success_count, total_count):
+        """Handle conversion completion."""
+        # Hide progress bar
+        self.progress_bar.setVisible(False)
+        self.lbl_progress.setVisible(False)
+
+        # Re-enable buttons
+        self.btn_run.setEnabled(True)
+        self.btn_preview.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
+
+        # Update scene if requested
+        if self.chk_update_scene.isChecked() and success_count > 0:
+            self._update_scene_file_nodes()
+
+    def _update_scene_file_nodes(self):
+        """Update Maya file nodes to point to .rstexbin files."""
+        self._log("\n--- UPDATE SCENE ---")
+
+        _, ocio, out_dir, _, _, _, _, files = self._gather()
+
+        # Build mapping of source files to .rstexbin files
+        file_map = {}
+        for f in files:
+            rstexbin_path = _expected_rstexbin_path(f, out_dir=out_dir)
+            if os.path.exists(rstexbin_path):
+                file_map[_norm(f)] = _norm(rstexbin_path)
+
+        if not file_map:
+            self._log("No .rstexbin files found to update in scene.")
+            return
+
+        # Update file nodes
+        updated_count = 0
+        file_nodes = cmds.ls(type="file") or []
+
+        for node in file_nodes:
+            try:
+                current_path = cmds.getAttr(node + ".fileTextureName")
+                if not current_path:
+                    continue
+
+                current_norm = _norm(current_path)
+
+                # Check if this file was converted
+                if current_norm in file_map:
+                    new_path = file_map[current_norm]
+                    cmds.setAttr(node + ".fileTextureName", new_path, type="string")
+                    self._log(f"✅ Updated {node}: {os.path.basename(new_path)}")
+                    updated_count += 1
+
+            except Exception as e:
+                self._log(f"❌ Error updating {node}: {e}")
+
+        self._log(f"\n✅ Updated {updated_count} file node(s) in scene.")
+
+    # ---------- Rules Table Methods ----------
+    def _populate_rules_table(self):
+        """Populate rules table with current rules."""
+        self.table_rules.setRowCount(0)
+        for name, pattern, exts, colorspace in self.rules:
+            row = self.table_rules.rowCount()
+            self.table_rules.insertRow(row)
+            self.table_rules.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
+            self.table_rules.setItem(row, 1, QtWidgets.QTableWidgetItem(pattern))
+            self.table_rules.setItem(row, 2, QtWidgets.QTableWidgetItem(exts))
+            self.table_rules.setItem(row, 3, QtWidgets.QTableWidgetItem(colorspace))
+
+    def _add_rule(self):
+        """Add a new rule to the table."""
+        row = self.table_rules.rowCount()
+        self.table_rules.insertRow(row)
+        self.table_rules.setItem(row, 0, QtWidgets.QTableWidgetItem("NEW_RULE"))
+        self.table_rules.setItem(row, 1, QtWidgets.QTableWidgetItem("*"))
+        self.table_rules.setItem(row, 2, QtWidgets.QTableWidgetItem("*"))
+        self.table_rules.setItem(row, 3, QtWidgets.QTableWidgetItem("Utility - Raw"))
+        self._sync_rules_from_table()
+
+    def _remove_rule(self):
+        """Remove selected rules from the table."""
+        selected_rows = set()
+        for item in self.table_rules.selectedItems():
+            selected_rows.add(item.row())
+        for row in sorted(selected_rows, reverse=True):
+            self.table_rules.removeRow(row)
+        self._sync_rules_from_table()
+
+    def _reset_rules(self):
+        """Reset rules to defaults."""
+        self.rules = list(DEFAULT_RULES)
+        self._populate_rules_table()
+
+    def _move_rule_up(self):
+        """Move selected rule up in priority."""
+        current_row = self.table_rules.currentRow()
+        if current_row > 0:
+            self._swap_table_rows(current_row, current_row - 1)
+            self.table_rules.setCurrentCell(current_row - 1, 0)
+            self._sync_rules_from_table()
+
+    def _move_rule_down(self):
+        """Move selected rule down in priority."""
+        current_row = self.table_rules.currentRow()
+        if current_row < self.table_rules.rowCount() - 1:
+            self._swap_table_rows(current_row, current_row + 1)
+            self.table_rules.setCurrentCell(current_row + 1, 0)
+            self._sync_rules_from_table()
+
+    def _swap_table_rows(self, row1, row2):
+        """Swap two rows in the rules table."""
+        for col in range(self.table_rules.columnCount()):
+            item1 = self.table_rules.takeItem(row1, col)
+            item2 = self.table_rules.takeItem(row2, col)
+            self.table_rules.setItem(row1, col, item2)
+            self.table_rules.setItem(row2, col, item1)
+
+    def _sync_rules_from_table(self):
+        """Sync self.rules from table contents."""
+        self.rules = []
+        for row in range(self.table_rules.rowCount()):
+            name = self.table_rules.item(row, 0).text() if self.table_rules.item(row, 0) else ""
+            pattern = self.table_rules.item(row, 1).text() if self.table_rules.item(row, 1) else "*"
+            exts = self.table_rules.item(row, 2).text() if self.table_rules.item(row, 2) else "*"
+            colorspace = self.table_rules.item(row, 3).text() if self.table_rules.item(row, 3) else "Utility - Raw"
+            self.rules.append((name, pattern, exts, colorspace))
+
+    def _run(self):
+        self._preview()
+
+        _, ocio, _, _, _, _, _, files = self._gather()
+        if not files:
+            self._log("No files to process.")
+            return
+
+        env = os.environ.copy()
+        env["OCIO"] = _norm(ocio)  # set file for robustness
+
+        plan = self._make_cmds_and_plan()
+        to_run = [x for x in plan if not x["skipped"]]
+
+        if not to_run:
+            self._log("\nNothing to run (all files skipped).")
+            return
+
+        # Show progress bar
+        self.progress_bar.setVisible(True)
+        self.lbl_progress.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(to_run))
+
+        # Disable buttons during conversion
+        self.btn_run.setEnabled(False)
+        self.btn_preview.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+
+        # Create and start worker thread
+        self.worker = ConversionWorker(plan, env)
+        self.worker.progress_updated.connect(self._on_progress_updated)
+        self.worker.log_message.connect(self._on_log_message)
+        self.worker.conversion_finished.connect(self._on_conversion_finished)
+        self.worker.start()
+
+
+def show_rs_texproc_maya_ui():
+    # Prevent duplicate windows
+    for w in QtWidgets.QApplication.topLevelWidgets():
+        if w.objectName() == "RSTextureProcessorMayaUI":
+            w.close()
+
+    dlg = RSTextureProcessorMayaUI(parent=QtWidgets.QApplication.activeWindow())
+    dlg.setObjectName("RSTextureProcessorMayaUI")
+    dlg.show()
+    return dlg
+
+
+# Usage in Maya Script Editor (Python):
+# import rs_texproc_maya_gui
+# rs_texproc_maya_gui.show_rs_texproc_maya_ui()

@@ -1,8 +1,16 @@
+from __future__ import absolute_import, division, print_function
+import sys
+
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
 
-from PySide2 import QtCore, QtWidgets
-from shiboken2 import wrapInstance
+# Python 2/3 compatibility for Qt
+try:
+    from PySide2 import QtCore, QtWidgets
+    from shiboken2 import wrapInstance
+except ImportError:
+    from PySide import QtCore, QtGui as QtWidgets
+    from shiboken import wrapInstance
 
 
 # ============================================================
@@ -20,10 +28,12 @@ def maya_main_window():
 # Alembic Hold Logic
 # ============================================================
 
-def _sanitize_name(name: str) -> str:
+def _sanitize_name(name):
+    """Sanitize name for Maya node naming (Python 2/3 compatible)."""
     return name.replace(":", "_").replace("|", "_")
 
-def _safe_disconnect(dst_attr: str) -> None:
+def _safe_disconnect(dst_attr):
+    """Safely disconnect attribute (Python 2/3 compatible)."""
     src = cmds.listConnections(dst_attr, s=True, d=False, p=True) or []
     if src:
         try:
@@ -31,11 +41,13 @@ def _safe_disconnect(dst_attr: str) -> None:
         except Exception:
             pass
 
-def _hold_rhs_expression(start: float, hold_n: int) -> str:
+def _hold_rhs_expression(start, hold_n):
+    """Generate hold expression RHS (Python 2/3 compatible)."""
     # sample_time = floor((t - start)/N)*N + start
-    return f"floor((time1.outTime - {start})/{hold_n})*{hold_n} + {start}"
+    return "floor((time1.outTime - {0})/{1})*{1} + {0}".format(start, hold_n)
 
-def apply_hold(alembic_nodes, hold_n: int) -> None:
+def apply_hold(alembic_nodes, hold_n):
+    """Apply hold expression to AlembicNodes (Python 2/3 compatible)."""
     if not alembic_nodes:
         return
     hold_n = max(int(hold_n), 1)
@@ -47,7 +59,7 @@ def apply_hold(alembic_nodes, hold_n: int) -> None:
         if not cmds.objExists(abc) or cmds.nodeType(abc) != "AlembicNode":
             continue
 
-        _safe_disconnect(f"{abc}.time")
+        _safe_disconnect("{0}.time".format(abc))
 
         exp_name = _sanitize_name(abc) + "_hold_expr"
         if cmds.objExists(exp_name):
@@ -58,12 +70,13 @@ def apply_hold(alembic_nodes, hold_n: int) -> None:
 
         cmds.expression(
             name=exp_name,
-            s=f"{abc}.time = {rhs};",
+            s="{0}.time = {1};".format(abc, rhs),
             ae=True,
             uc="all"
         )
 
-def remove_hold(alembic_nodes) -> None:
+def remove_hold(alembic_nodes):
+    """Remove hold expression from AlembicNodes (Python 2/3 compatible)."""
     if not alembic_nodes:
         return
 
@@ -78,10 +91,10 @@ def remove_hold(alembic_nodes) -> None:
             except Exception:
                 pass
 
-        src = cmds.listConnections(f"{abc}.time", s=True, d=False, p=True) or []
+        src = cmds.listConnections("{0}.time".format(abc), s=True, d=False, p=True) or []
         if not src:
             try:
-                cmds.connectAttr("time1.outTime", f"{abc}.time", force=True)
+                cmds.connectAttr("time1.outTime", "{0}.time".format(abc), force=True)
             except Exception:
                 pass
 
@@ -90,15 +103,18 @@ def remove_hold(alembic_nodes) -> None:
 # Namespace inference for tree grouping (your logic + minor tweaks)
 # ============================================================
 
-def _ns_root_from_name(node_name: str):
+def _ns_root_from_name(node_name):
+    """Extract namespace root from node name (Python 2/3 compatible)."""
     return node_name.split(":", 1)[0] if ":" in node_name else None
 
-def _type_prefix(ns_root: str) -> str:
+def _type_prefix(ns_root):
+    """Extract type prefix from namespace root (Python 2/3 compatible)."""
     if not ns_root or ns_root == "NO_NAMESPACE":
         return "NO_NAMESPACE"
     return ns_root.split("_", 1)[0]
 
-def _infer_asset_namespace_from_alembicnode(abc_node: str) -> str:
+def _infer_asset_namespace_from_alembicnode(abc_node):
+    """Infer asset namespace from AlembicNode connections (Python 2/3 compatible)."""
     candidates = []
 
     downstream = cmds.listConnections(abc_node, s=False, d=True) or []
@@ -150,12 +166,13 @@ def _infer_asset_namespace_from_alembicnode(abc_node: str) -> str:
 # Goal: Frame 2 pose = frame 1, but translate to match frame 2 position.
 # ============================================================
 
-def _normalize_vertex_to_transform(vtx: str) -> str:
+def _normalize_vertex_to_transform(vtx):
     """
     Accept both:
       meshTransform.vtx[12]
       meshShape.vtx[12]
     and normalize to transform component.
+    (Python 2/3 compatible)
     """
     if ".vtx[" not in vtx:
         return vtx
@@ -227,17 +244,21 @@ def _lowest_common_parent(nodes):
 
     return sorted(common, key=score)[0]
 
-def _hold_time(frame: int, start: int, hold_n: int) -> int:
+def _hold_time(frame, start, hold_n):
+    """Calculate held time for given frame (Python 2/3 compatible)."""
     n = max(int(hold_n), 1)
     return int(((frame - start) // n) * n + start)
 
-def _set_alembic_manual_time(abc: str):
+def _set_alembic_manual_time(abc):
+    """Disconnect AlembicNode time attribute (Python 2/3 compatible)."""
     _safe_disconnect(abc + ".time")
 
-def _set_alembic_time_value(abc: str, tval: int):
+def _set_alembic_time_value(abc, tval):
+    """Set AlembicNode time value (Python 2/3 compatible)."""
     cmds.setAttr(abc + ".time", float(tval))
 
-def _delete_if_exists(node: str):
+def _delete_if_exists(node):
+    """Delete node if it exists (Python 2/3 compatible)."""
     if cmds.objExists(node):
         try:
             cmds.delete(node)
@@ -245,12 +266,12 @@ def _delete_if_exists(node: str):
             pass
 
 def _build_keep_travel_from_vertex(
-    vtx: str,
-    hold_n: int,
-    apply_constraint: bool,
-    use_tree_nodes_for_hold: bool,
-    alembic_nodes_for_hold: list,
-    target_mode: str,  # "namespace_common_parent" or "mesh_transform"
+    vtx,
+    hold_n,
+    apply_constraint,
+    use_tree_nodes_for_hold,
+    alembic_nodes_for_hold,
+    target_mode,  # "namespace_common_parent" or "mesh_transform"
     axes_mask=(True, True, True),  # X,Y,Z
     show_progress=True,
     suspend_viewport=True
@@ -261,6 +282,7 @@ def _build_keep_travel_from_vertex(
     then:
       - applies alembic hold expression to target AlembicNode(s)
       - optionally pointConstraints the character group/transform to that locator
+    (Python 2/3 compatible)
     """
     hold_n = max(int(hold_n), 1)
 
@@ -353,7 +375,7 @@ def _build_keep_travel_from_vertex(
             if show_progress:
                 if cmds.progressWindow(q=True, isCancelled=True):
                     raise RuntimeError("Cancelled.")
-                cmds.progressWindow(e=True, progress=i, status=f"Caching P({f})")
+                cmds.progressWindow(e=True, progress=i, status="Caching P({0})".format(f))
 
             cmds.currentTime(f, e=True)
             _set_alembic_time_value(sample_abc, f)
@@ -367,7 +389,7 @@ def _build_keep_travel_from_vertex(
             if show_progress:
                 if cmds.progressWindow(q=True, isCancelled=True):
                     raise RuntimeError("Cancelled.")
-                cmds.progressWindow(e=True, progress=i, status=f"Baking {f}")
+                cmds.progressWindow(e=True, progress=i, status="Baking {0}".format(f))
 
             p_t = pos_cache[f]
             th = _hold_time(f, start, hold_n)
@@ -422,12 +444,13 @@ def _build_keep_travel_from_vertex(
         "constraint": con_name if apply_constraint else ""
     }
 
-def remove_keep_travel(ns_or_mesh: str):
+def remove_keep_travel(ns_or_mesh):
     """
     Remove baked keep-travel setup by deleting:
       *_POSEHOLD_offsetWorld_LOC
       *_POSEHOLD_pointCons
     based on sanitized key from namespace or mesh.
+    (Python 2/3 compatible)
     """
     key = _sanitize_name(ns_or_mesh)
     loc = key + "_POSEHOLD_offsetWorld_LOC"

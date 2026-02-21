@@ -362,6 +362,22 @@ class ShotBuildTab(QtWidgets.QWidget):
         place3d_method_layout.addStretch()
         setup_layout.addLayout(place3d_method_layout)
 
+        # SETS Instance optimization option
+        sets_instance_layout = QtWidgets.QHBoxLayout()
+        self.use_sets_instances_checkbox = QtWidgets.QCheckBox("Use Instances for Duplicate SETS Components (Optimization)")
+        self.use_sets_instances_checkbox.setToolTip(
+            "Optimize SETS build by using Maya instances for duplicate components.\n"
+            "Instead of referencing the same geo file multiple times, creates:\n"
+            "  - 1 reference for the MASTER component\n"
+            "  - Instances for all duplicates (sharing geometry & shaders)\n"
+            "Result: Faster load times, less memory usage, cleaner scene."
+        )
+        self.use_sets_instances_checkbox.setStyleSheet("font-weight: bold; color: #FF9800;")
+        self.use_sets_instances_checkbox.setChecked(False)  # Default to traditional references
+        sets_instance_layout.addWidget(self.use_sets_instances_checkbox)
+        sets_instance_layout.addStretch()
+        setup_layout.addLayout(sets_instance_layout)
+
         # Build buttons
         build_layout = QtWidgets.QVBoxLayout()
 
@@ -1034,8 +1050,63 @@ class ShotBuildTab(QtWidgets.QWidget):
             self._log("[INFO] No SETS assets found in cache list.")
             return
 
-        self._log("[BUILD SETS] Starting Sets build process...")
+        # Check if instance optimization is enabled
+        use_instances = self.use_sets_instances_checkbox.isChecked()
 
+        if use_instances:
+            self._log("[BUILD SETS] Starting Sets build with INSTANCE OPTIMIZATION...")
+            self._build_sets_with_instances(sets_assets)
+        else:
+            self._log("[BUILD SETS] Starting Sets build (traditional references)...")
+            self._build_sets_traditional(sets_assets)
+
+        self._log("[BUILD SETS] Completed Sets build process")
+
+    def _build_sets_with_instances(self, sets_assets):
+        """Build Sets using instance optimization (1 reference + instances for duplicates)."""
+        try:
+            # Import the instance builder module
+            from . import sets_instance_builder
+        except ImportError:
+            try:
+                import sets_instance_builder
+            except ImportError:
+                self._log("[ERROR] Could not import sets_instance_builder module")
+                self._log("[FALLBACK] Using traditional reference method...")
+                self._build_sets_traditional(sets_assets)
+                return
+
+        root = self.root_path_edit.text().strip()
+        project = self.project_combo.currentText()
+
+        builder = sets_instance_builder.SetsInstanceBuilder(
+            root, project, log_callback=self._log
+        )
+
+        for asset in sets_assets:
+            try:
+                cache_file = asset['full_path']
+                self._log("\n[INSTANCE BUILD] Processing: {}".format(asset['filename']))
+
+                stats = builder.build_sets_with_instances(cache_file)
+
+                if stats.get("errors"):
+                    for error in stats["errors"]:
+                        self._log("[ERROR] {}".format(error))
+                else:
+                    self._log("[OK] Built {} with {} masters + {} instances (saved {} references)".format(
+                        asset['filename'],
+                        stats.get("masters_created", 0),
+                        stats.get("instances_created", 0),
+                        stats.get("instances_created", 0)
+                    ))
+
+            except Exception as e:
+                self._log("[ERROR] Failed to build SETS asset with instances {}: {}".format(
+                    asset['filename'], str(e)))
+
+    def _build_sets_traditional(self, sets_assets):
+        """Build Sets using traditional method (reference per locator)."""
         for asset in sets_assets:
             try:
                 # Import alembic cache
@@ -1103,8 +1174,6 @@ class ShotBuildTab(QtWidgets.QWidget):
 
             except Exception as e:
                 self._log("[ERROR] Failed to build SETS asset {}: {}".format(asset['filename'], str(e)))
-
-        self._log("[BUILD SETS] Completed Sets build process")
 
     def _process_sets_locator(self, locator, set_namespace):
         """Process individual Sets locator for asset placement."""
