@@ -307,7 +307,7 @@ class ConversionWorker(QtCore.QThread):
 
         for idx, item in enumerate(self.to_run):
             if self._is_cancelled:
-                self.log_message.emit("\n❌ Conversion cancelled by user.")
+                self.log_message.emit("\n[ERROR] Conversion cancelled by user.")
                 break
 
             cmdline = item["cmd"]
@@ -337,14 +337,14 @@ class ConversionWorker(QtCore.QThread):
 
                 if res.returncode == 0:
                     ok += 1
-                    self.log_message.emit(f"✅ [{idx+1}/{total}] {os.path.basename(src_file)}")
+                    self.log_message.emit(f"[OK] [{idx+1}/{total}] {os.path.basename(src_file)}")
                 else:
-                    self.log_message.emit(f"❌ ERROR: return code {res.returncode} | {src_file}")
+                    self.log_message.emit(f"[ERROR] return code {res.returncode} | {src_file}")
 
             except Exception as e:
-                self.log_message.emit(f"❌ ERROR running command: {e}")
+                self.log_message.emit(f"[ERROR] running command: {e}")
 
-        self.log_message.emit(f"\n✅ Done. Success: {ok}/{total}")
+        self.log_message.emit(f"\n[OK] Done. Success: {ok}/{total}")
         self.conversion_finished.emit(ok, total)
 
 
@@ -673,7 +673,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.table_inputs.setItem(row, 3, tiles_item)
 
         # .rstexbin status column
-        status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
+        status_item = QtWidgets.QTableWidgetItem("YES" if has_rstexbin else "NO")
         status_item.setTextAlignment(QtCore.Qt.AlignCenter)
         if has_rstexbin:
             status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
@@ -730,7 +730,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             if tiles:
                 self._log(f"\nTile Files:")
                 for tile in tiles:
-                    exists = "✓" if os.path.exists(tile) else "✗"
+                    exists = "[OK]" if os.path.exists(tile) else "[X]"
                     size = os.path.getsize(tile) if os.path.exists(tile) else 0
                     size_mb = size / (1024 * 1024)
                     self._log(f"  {exists} {os.path.basename(tile)} ({size_mb:.2f} MB)")
@@ -741,18 +741,18 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 size = os.path.getsize(texture_path)
                 size_mb = size / (1024 * 1024)
                 self._log(f"Size: {size_mb:.2f} MB")
-                self._log(f"Status: ✓ File exists")
+                self._log(f"Status: [OK] File exists")
 
                 # Check for .rstexbin
                 rstexbin_path = texture_path + ".rstexbin"
                 if os.path.exists(rstexbin_path):
                     rstexbin_size = os.path.getsize(rstexbin_path)
                     rstexbin_mb = rstexbin_size / (1024 * 1024)
-                    self._log(f".rstexbin: ✓ Exists ({rstexbin_mb:.2f} MB)")
+                    self._log(f".rstexbin: [OK] Exists ({rstexbin_mb:.2f} MB)")
                 else:
-                    self._log(f".rstexbin: ✗ Not found")
+                    self._log(f".rstexbin: [X] Not found")
             else:
-                self._log(f"Status: ✗ File not found")
+                self._log(f"Status: [X] File not found")
 
         self._log("")
 
@@ -803,7 +803,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 size_mb = size / (1024 * 1024)
                 self._log(f"  {i:2d}. {os.path.basename(tile)} ({size_mb:.2f} MB)")
             else:
-                self._log(f"  {i:2d}. {os.path.basename(tile)} (✗ NOT FOUND)")
+                self._log(f"  {i:2d}. {os.path.basename(tile)} ([X] NOT FOUND)")
 
         total_mb = total_size / (1024 * 1024)
         self._log(f"\nTotal Size: {total_mb:.2f} MB")
@@ -911,7 +911,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         """Cancel the running conversion."""
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self._log("\n⚠️ Cancelling conversion...")
+            self._log("\n[WARNING] Cancelling conversion...")
 
     def _on_progress_updated(self, current, total, message):
         """Update progress bar and label."""
@@ -971,13 +971,13 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 if current_norm in file_map:
                     new_path = file_map[current_norm]
                     cmds.setAttr(node + ".fileTextureName", new_path, type="string")
-                    self._log(f"✅ Updated {node}: {os.path.basename(new_path)}")
+                    self._log(f"[OK] Updated {node}: {os.path.basename(new_path)}")
                     updated_count += 1
 
             except Exception as e:
-                self._log(f"❌ Error updating {node}: {e}")
+                self._log(f"[ERROR] Error updating {node}: {e}")
 
-        self._log(f"\n✅ Updated {updated_count} file node(s) in scene.")
+        self._log(f"\n[OK] Updated {updated_count} file node(s) in scene.")
 
     # ---------- Rules Table Methods ----------
     def _populate_rules_table(self):
