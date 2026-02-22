@@ -195,13 +195,16 @@ def _match_rule_colorspace(filepath: str, rules=None) -> str:
 def _expected_rstexbin_path(src_file: str, out_dir: str = "") -> str:
     """
     Predict output .rstexbin path.
-    If out_dir empty -> next to source: <src>.rstexbin
-    If out_dir set  -> <out_dir>/<basename>.rstexbin
+    If out_dir empty -> next to source: <src_stem>.rstexbin (replaces extension)
+    If out_dir set  -> <out_dir>/<src_stem>.rstexbin
     """
     src = Path(src_file)
+    # Replace extension with .rstexbin (e.g., texture.jpeg -> texture.rstexbin)
+    rstexbin_name = src.stem + ".rstexbin"
+
     if out_dir:
-        return _norm(str(Path(out_dir) / (src.name + ".rstexbin")))
-    return _norm(str(src.with_name(src.name + ".rstexbin")))
+        return _norm(str(Path(out_dir) / rstexbin_name))
+    return _norm(str(src.parent / rstexbin_name))
 
 
 def _build_cmd(texproc_exe: str, in_file: str, ocio_file: str,
