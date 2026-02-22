@@ -74,10 +74,18 @@ def _collect_files(inputs: list, recursive: bool) -> list:
         if not it:
             continue
 
-        # Check if path contains UDIM or other special placeholders
-        # These are valid texture paths but can't be checked with pathlib
-        if "<UDIM>" in it or "<udim>" in it or "<tile>" in it or "<TILE>" in it:
-            # For UDIM paths, just add them as-is (they're valid texture references)
+        # Check if path contains UDIM placeholder - expand to actual tiles
+        if "<UDIM>" in it or "<udim>" in it:
+            tiles = _expand_udim_tiles(it)
+            if tiles:
+                out.extend(tiles)
+            else:
+                # No tiles found, log warning but continue
+                print(f"Warning: No UDIM tiles found for pattern: {it}")
+            continue
+
+        # Handle other placeholders (just add as-is for now)
+        if "<tile>" in it or "<TILE>" in it:
             out.append(_norm(it))
             continue
 
@@ -116,6 +124,37 @@ def _collect_files(inputs: list, recursive: bool) -> list:
         seen.add(k)
         uniq.append(f)
     return uniq
+
+
+def _expand_udim_tiles(udim_path: str) -> list:
+    """
+    Expand UDIM pattern to actual tile files.
+    E.g., 'texture_<UDIM>.png' -> ['texture_1001.png', 'texture_1002.png', ...]
+
+    Returns list of existing tile files, or empty list if no tiles found.
+    """
+    if "<UDIM>" not in udim_path and "<udim>" not in udim_path:
+        return []
+
+    # Replace UDIM placeholder with wildcard pattern
+    pattern = udim_path.replace("<UDIM>", "????").replace("<udim>", "????")
+
+    # Get directory and pattern
+    dir_path = os.path.dirname(pattern)
+    file_pattern = os.path.basename(pattern)
+
+    if not dir_path:
+        dir_path = "."
+
+    if not os.path.isdir(dir_path):
+        return []
+
+    # Find all matching files
+    import glob
+    matching_files = glob.glob(os.path.join(dir_path, file_pattern))
+
+    # Sort for consistent ordering
+    return sorted(matching_files)
 
 
 def _match_rule_colorspace(filepath: str, rules=None) -> str:
@@ -599,16 +638,37 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         row = self.table_inputs.rowCount()
         self.table_inputs.insertRow(row)
 
-        self.table_inputs.setItem(row, 0, QtWidgets.QTableWidgetItem(path))
-        self.table_inputs.setItem(row, 1, QtWidgets.QTableWidgetItem(node))
-        self.table_inputs.setItem(row, 2, QtWidgets.QTableWidgetItem(node_type))
+        # Check if this is a UDIM pattern
+        is_udim = "<UDIM>" in path or "<udim>" in path
 
-        status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
-        status_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        if has_rstexbin:
-            status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+        # Display path with UDIM indicator
+        path_display = path
+        if is_udim:
+            tiles = _expand_udim_tiles(path)
+            path_display = f"{path}  [{len(tiles)} tiles]" if tiles else f"{path}  [0 tiles]"
+
+        self.table_inputs.setItem(row, 0, QtWidgets.QTableWidgetItem(path_display))
+        self.table_inputs.setItem(row, 1, QtWidgets.QTableWidgetItem(node))
+
+        # Show node type with UDIM indicator
+        node_type_display = f"{node_type} (UDIM)" if is_udim else node_type
+        self.table_inputs.setItem(row, 2, QtWidgets.QTableWidgetItem(node_type_display))
+
+        # Status: for UDIM, show tile count instead of .rstexbin status
+        if is_udim:
+            tiles = _expand_udim_tiles(path)
+            status_text = f"{len(tiles)} tiles"
+            status_item = QtWidgets.QTableWidgetItem(status_text)
+            status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            status_item.setForeground(QtGui.QColor(100, 150, 200))  # Blue for UDIM
         else:
-            status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+            status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
+            status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            if has_rstexbin:
+                status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+            else:
+                status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+
         self.table_inputs.setItem(row, 3, status_item)
 
     def _clear_table(self):
