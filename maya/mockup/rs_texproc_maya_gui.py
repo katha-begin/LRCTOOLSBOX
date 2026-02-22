@@ -68,18 +68,43 @@ def _guess_texproc_exe() -> str:
 
 
 def _collect_files(inputs: list, recursive: bool) -> list:
+    """Collect files from inputs, handling UDIM and other special placeholders."""
     out = []
     for it in inputs:
         if not it:
             continue
-        p = Path(it)
-        if p.is_file():
-            out.append(str(p))
-        elif p.is_dir():
-            if recursive:
-                out.extend([str(f) for f in p.rglob("*") if f.is_file()])
-            else:
-                out.extend([str(f) for f in p.glob("*") if f.is_file()])
+
+        # Check if path contains UDIM or other special placeholders
+        # These are valid texture paths but can't be checked with pathlib
+        if "<UDIM>" in it or "<udim>" in it or "<tile>" in it or "<TILE>" in it:
+            # For UDIM paths, just add them as-is (they're valid texture references)
+            out.append(_norm(it))
+            continue
+
+        try:
+            p = Path(it)
+            if p.is_file():
+                out.append(str(p))
+            elif p.is_dir():
+                if recursive:
+                    out.extend([str(f) for f in p.rglob("*") if f.is_file()])
+                else:
+                    out.extend([str(f) for f in p.glob("*") if f.is_file()])
+        except (OSError, ValueError):
+            # If pathlib can't handle the path (invalid characters, etc.),
+            # check if it's a valid file path using os.path
+            if os.path.isfile(it):
+                out.append(_norm(it))
+            elif os.path.isdir(it):
+                if recursive:
+                    for root, dirs, files in os.walk(it):
+                        for f in files:
+                            out.append(_norm(os.path.join(root, f)))
+                else:
+                    for f in os.listdir(it):
+                        full_path = os.path.join(it, f)
+                        if os.path.isfile(full_path):
+                            out.append(_norm(full_path))
 
     # de-dupe preserving order
     seen = set()
