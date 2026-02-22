@@ -720,6 +720,10 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 for tile in tiles:
                     # Calculate expected output path for this tile
                     expected_output = _expected_rstexbin_path(tile, out_dir=out_dir)
+                    # DEBUG: Print what we're checking
+                    print(f"DEBUG: Checking UDIM tile: {tile}")
+                    print(f"DEBUG: Expected output: {expected_output}")
+                    print(f"DEBUG: Exists: {_path_exists(expected_output)}")
                     if _path_exists(expected_output):
                         rstexbin_count += 1
 
