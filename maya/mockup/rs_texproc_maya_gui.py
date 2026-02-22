@@ -280,9 +280,15 @@ def _scan_scene_textures():
                     continue
                 seen_paths.add(path_key)
 
-                # Check if .rstexbin exists (use expected output path logic)
-                rstexbin_path = _expected_rstexbin_path(tex_path_norm, out_dir="")
-                has_rstexbin = _path_exists(rstexbin_path)
+                # Check if .rstexbin exists
+                # For UDIM patterns, we can't check here (need to expand tiles first)
+                # So we'll let _refresh_table_status() handle it
+                is_udim = "<UDIM>" in tex_path_norm or "<udim>" in tex_path_norm
+                if is_udim:
+                    has_rstexbin = False  # Will be updated by _refresh_table_status()
+                else:
+                    rstexbin_path = _expected_rstexbin_path(tex_path_norm, out_dir="")
+                    has_rstexbin = _path_exists(rstexbin_path)
 
                 textures.append((tex_path_norm, node, node_type, has_rstexbin))
 
@@ -647,6 +653,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             self._add_texture_to_table(tex_path, node, node_type, has_rstexbin)
 
         self._log(f"Added {len(textures)} textures from scene (all node types).")
+
+        # Refresh status to properly calculate UDIM tile counts
+        self._refresh_table_status()
 
     def _add_texture_to_table(self, path, node, node_type, has_rstexbin):
         """Add a texture entry to the table."""
