@@ -148,9 +148,12 @@ def _expand_udim_tiles(udim_path: str) -> list:
     # Replace UDIM placeholder with wildcard pattern
     pattern = udim_path.replace("<UDIM>", "????").replace("<udim>", "????")
 
+    # Convert to OS-native path for glob operations
+    pattern_native = pattern.replace("/", os.sep)
+
     # Get directory and pattern
-    dir_path = os.path.dirname(pattern)
-    file_pattern = os.path.basename(pattern)
+    dir_path = os.path.dirname(pattern_native)
+    file_pattern = os.path.basename(pattern_native)
 
     if not dir_path:
         dir_path = "."
@@ -162,8 +165,8 @@ def _expand_udim_tiles(udim_path: str) -> list:
     import glob
     matching_files = glob.glob(os.path.join(dir_path, file_pattern))
 
-    # Sort for consistent ordering
-    return sorted(matching_files)
+    # Normalize results back to forward slashes
+    return sorted([_norm(f) for f in matching_files])
 
 
 def _match_rule_colorspace(filepath: str, rules=None) -> str:
