@@ -413,6 +413,15 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.chk_update_scene.setChecked(False)
         self.chk_update_scene.setToolTip("After conversion, update Maya file nodes to point to .rstexbin files")
 
+        # --- Filter Controls ---
+        self.combo_rstexbin_filter = QtWidgets.QComboBox()
+        self.combo_rstexbin_filter.addItems(["All", "Has .rstexbin", "No .rstexbin"])
+        self.combo_rstexbin_filter.setMaximumWidth(150)
+
+        self.combo_type_filter = QtWidgets.QComboBox()
+        self.combo_type_filter.addItems(["All Types", "file", "file (UDIM)"])
+        self.combo_type_filter.setMaximumWidth(150)
+
         # --- Inputs Table (replaces list widget) ---
         self.table_inputs = QtWidgets.QTableWidget()
         self.table_inputs.setColumnCount(5)
@@ -493,6 +502,10 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.btn_run.clicked.connect(self._run)
         self.btn_cancel.clicked.connect(self._cancel_conversion)
 
+        # Filter signals
+        self.combo_rstexbin_filter.currentIndexChanged.connect(self._apply_filters)
+        self.combo_type_filter.currentIndexChanged.connect(self._apply_filters)
+
     def _create_main_tab_layout(self, parent):
         """Create the main conversion tab layout."""
         form = QtWidgets.QFormLayout()
@@ -543,6 +556,17 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         main = QtWidgets.QVBoxLayout(parent)
         main.addLayout(form)
         main.addWidget(QtWidgets.QLabel("Inputs:"))
+
+        # Filter controls
+        filter_layout = QtWidgets.QHBoxLayout()
+        filter_layout.addWidget(QtWidgets.QLabel("Filter:"))
+        filter_layout.addWidget(QtWidgets.QLabel(".rstexbin Status:"))
+        filter_layout.addWidget(self.combo_rstexbin_filter)
+        filter_layout.addWidget(QtWidgets.QLabel("Type:"))
+        filter_layout.addWidget(self.combo_type_filter)
+        filter_layout.addStretch(1)
+        main.addLayout(filter_layout)
+
         main.addWidget(self.table_inputs)
         main.addLayout(btns)
 
@@ -762,6 +786,37 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                     status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
 
             self.table_inputs.setItem(row, 4, status_item)
+
+    def _apply_filters(self):
+        """Apply .rstexbin status and type filters to the table."""
+        rstexbin_filter = self.combo_rstexbin_filter.currentText()
+        type_filter = self.combo_type_filter.currentText()
+
+        for row in range(self.table_inputs.rowCount()):
+            # Get row data
+            texture_path = self.table_inputs.item(row, 0).text()
+            node_type = self.table_inputs.item(row, 2).text()
+            rstexbin_status = self.table_inputs.item(row, 4).text()
+
+            # Check .rstexbin filter
+            show_by_rstexbin = True
+            if rstexbin_filter == "Has .rstexbin":
+                # Show only if status is YES or has tiles (e.g., "10/10", "5/10")
+                show_by_rstexbin = rstexbin_status != "NO" and rstexbin_status != "0/0"
+            elif rstexbin_filter == "No .rstexbin":
+                # Show only if status is NO or no tiles (e.g., "0/10")
+                show_by_rstexbin = rstexbin_status == "NO" or rstexbin_status.startswith("0/")
+
+            # Check type filter
+            show_by_type = True
+            if type_filter == "file":
+                show_by_type = node_type == "file"
+            elif type_filter == "file (UDIM)":
+                show_by_type = node_type == "file (UDIM)"
+
+            # Show/hide row based on both filters
+            show_row = show_by_rstexbin and show_by_type
+            self.table_inputs.setRowHidden(row, not show_row)
 
     def _on_table_context_menu(self, pos):
         """Handle right-click context menu on table."""
