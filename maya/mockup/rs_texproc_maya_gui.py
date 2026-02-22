@@ -688,6 +688,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
 
     def _refresh_table_status(self):
         """Refresh .rstexbin status for all textures in the table."""
+        # Get current output directory setting
+        out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
+
         for row in range(self.table_inputs.rowCount()):
             texture_path = self.table_inputs.item(row, 0).text()
 
@@ -695,11 +698,14 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             is_udim = "<UDIM>" in texture_path or "<udim>" in texture_path
 
             if is_udim:
-                # For UDIM, check if any tiles have .rstexbin
+                # For UDIM, expand tiles and check each one's expected output path
                 tiles = _expand_udim_tiles(texture_path)
                 rstexbin_count = 0
+
                 for tile in tiles:
-                    if os.path.exists(tile + ".rstexbin"):
+                    # Calculate expected output path for this tile
+                    expected_output = _expected_rstexbin_path(tile, out_dir=out_dir)
+                    if os.path.exists(expected_output):
                         rstexbin_count += 1
 
                 # Update status: show count of converted tiles
@@ -715,8 +721,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 else:
                     status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red - none done
             else:
-                # For regular textures, check if .rstexbin exists
-                has_rstexbin = os.path.exists(texture_path + ".rstexbin")
+                # For regular textures, check expected output path
+                expected_output = _expected_rstexbin_path(texture_path, out_dir=out_dir)
+                has_rstexbin = os.path.exists(expected_output)
                 status_text = "YES" if has_rstexbin else "NO"
                 status_item = QtWidgets.QTableWidgetItem(status_text)
                 status_item.setTextAlignment(QtCore.Qt.AlignCenter)
