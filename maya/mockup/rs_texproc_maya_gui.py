@@ -57,6 +57,38 @@ def _path_exists(p: str) -> bool:
     return os.path.exists(p.replace("/", os.sep))
 
 
+def _get_mtime(p: str) -> float:
+    """Get file modification time. Returns 0 if file doesn't exist."""
+    if not p or not _path_exists(p):
+        return 0.0
+    try:
+        return os.path.getmtime(p.replace("/", os.sep))
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _compare_timestamps(source_path: str, rstexbin_path: str) -> str:
+    """
+    Compare modification timestamps between source and .rstexbin file.
+
+    Returns:
+        "Up-to-date" - .rstexbin exists and is newer or same age as source
+        "Outdated" - .rstexbin exists but source is newer
+        "Not Converted" - .rstexbin doesn't exist
+    """
+    source_mtime = _get_mtime(source_path)
+    rstexbin_mtime = _get_mtime(rstexbin_path)
+
+    if rstexbin_mtime == 0.0:
+        return "Not Converted"
+
+    # If source is newer than rstexbin, it's outdated
+    if source_mtime > rstexbin_mtime:
+        return "Outdated"
+
+    return "Up-to-date"
+
+
 def _ocio_from_env_or_default() -> str:
     ocio = (os.environ.get("OCIO") or "").strip()
     return ocio if ocio else DEFAULT_OCIO
@@ -422,14 +454,18 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.combo_type_filter.addItems(["All Types", "file", "file (UDIM)"])
         self.combo_type_filter.setMaximumWidth(150)
 
+        self.combo_freshness_filter = QtWidgets.QComboBox()
+        self.combo_freshness_filter.addItems(["All Freshness", "Up-to-date", "Outdated", "Not Converted"])
+        self.combo_freshness_filter.setMaximumWidth(150)
+
         self.ed_search = QtWidgets.QLineEdit()
         self.ed_search.setPlaceholderText("Search by path or node name...")
         self.ed_search.setMaximumWidth(300)
 
         # --- Inputs Table (replaces list widget) ---
         self.table_inputs = QtWidgets.QTableWidget()
-        self.table_inputs.setColumnCount(5)
-        self.table_inputs.setHorizontalHeaderLabels(["Texture Path", "Node", "Type", "Tiles", ".rstexbin"])
+        self.table_inputs.setColumnCount(6)
+        self.table_inputs.setHorizontalHeaderLabels(["Texture Path", "Node", "Type", "Tiles", ".rstexbin", "Freshness"])
         self.table_inputs.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table_inputs.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table_inputs.setAlternatingRowColors(True)
@@ -439,6 +475,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.table_inputs.setColumnWidth(2, 100)
         self.table_inputs.setColumnWidth(3, 80)
         self.table_inputs.setColumnWidth(4, 80)
+        self.table_inputs.setColumnWidth(5, 120)
 
         # Enable right-click context menu
         self.table_inputs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -509,6 +546,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         # Filter signals
         self.combo_rstexbin_filter.currentIndexChanged.connect(self._apply_filters)
         self.combo_type_filter.currentIndexChanged.connect(self._apply_filters)
+        self.combo_freshness_filter.currentIndexChanged.connect(self._apply_filters)
         self.ed_search.textChanged.connect(self._apply_filters)
 
     def _create_main_tab_layout(self, parent):
@@ -569,6 +607,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         filter_layout.addWidget(self.combo_rstexbin_filter)
         filter_layout.addWidget(QtWidgets.QLabel("Type:"))
         filter_layout.addWidget(self.combo_type_filter)
+        filter_layout.addWidget(QtWidgets.QLabel("Freshness:"))
+        filter_layout.addWidget(self.combo_freshness_filter)
         filter_layout.addWidget(QtWidgets.QLabel("Search:"))
         filter_layout.addWidget(self.ed_search)
         filter_layout.addStretch(1)
@@ -737,12 +777,17 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
 
         self.table_inputs.setItem(row, 4, status_item)
 
+        # Freshness column (will be updated by _refresh_table_status)
+        freshness_item = QtWidgets.QTableWidgetItem("-")
+        freshness_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        self.table_inputs.setItem(row, 5, freshness_item)
+
     def _clear_table(self):
         """Clear all entries from the table."""
         self.table_inputs.setRowCount(0)
 
     def _refresh_table_status(self):
-        """Refresh .rstexbin status for all textures in the table."""
+        """Refresh .rstexbin status and freshness for all textures in the table."""
         # Get current output directory setting
         out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
 
@@ -756,6 +801,12 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 # For UDIM, expand tiles and check if .rstexbin exists next to each tile
                 tiles = _expand_udim_tiles(texture_path)
                 rstexbin_count = 0
+                freshness_status = "Not Converted"  # Default
+
+                # Check freshness for all tiles
+                has_outdated = False
+                has_not_converted = False
+                all_up_to_date = True
 
                 for tile in tiles:
                     # Simple: replace extension with .rstexbin
@@ -766,6 +817,25 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
 
                     if _path_exists(rstexbin_path):
                         rstexbin_count += 1
+                        # Check timestamp
+                        tile_freshness = _compare_timestamps(tile, rstexbin_path)
+                        if tile_freshness == "Outdated":
+                            has_outdated = True
+                            all_up_to_date = False
+                        elif tile_freshness == "Not Converted":
+                            has_not_converted = True
+                            all_up_to_date = False
+                    else:
+                        has_not_converted = True
+                        all_up_to_date = False
+
+                # Determine overall freshness for UDIM
+                if has_outdated:
+                    freshness_status = "Outdated"
+                elif has_not_converted:
+                    freshness_status = "Not Converted"
+                elif all_up_to_date and rstexbin_count == len(tiles):
+                    freshness_status = "Up-to-date"
 
                 # Update status: show count of converted tiles
                 status_text = f"{rstexbin_count}/{len(tiles)}"
@@ -779,6 +849,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                     status_item.setForeground(QtGui.QColor(200, 150, 0))  # Orange - partial
                 else:
                     status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red - none done
+
+                self.table_inputs.setItem(row, 4, status_item)
             else:
                 # For regular textures, check expected output path
                 expected_output = _expected_rstexbin_path(texture_path, out_dir=out_dir)
@@ -792,12 +864,30 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 else:
                     status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
 
-            self.table_inputs.setItem(row, 4, status_item)
+                # Check freshness for regular texture
+                freshness_status = _compare_timestamps(texture_path, expected_output)
+
+                self.table_inputs.setItem(row, 4, status_item)
+
+            # Update freshness column
+            freshness_item = QtWidgets.QTableWidgetItem(freshness_status)
+            freshness_item.setTextAlignment(QtCore.Qt.AlignCenter)
+
+            # Color code freshness
+            if freshness_status == "Up-to-date":
+                freshness_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+            elif freshness_status == "Outdated":
+                freshness_item.setForeground(QtGui.QColor(200, 150, 0))  # Orange
+            else:  # Not Converted
+                freshness_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+
+            self.table_inputs.setItem(row, 5, freshness_item)
 
     def _apply_filters(self):
-        """Apply .rstexbin status, type, and text search filters to the table."""
+        """Apply .rstexbin status, type, freshness, and text search filters to the table."""
         rstexbin_filter = self.combo_rstexbin_filter.currentText()
         type_filter = self.combo_type_filter.currentText()
+        freshness_filter = self.combo_freshness_filter.currentText()
         search_text = self.ed_search.text().strip().lower()  # Case-insensitive
 
         for row in range(self.table_inputs.rowCount()):
@@ -806,6 +896,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             node_name = self.table_inputs.item(row, 1).text()
             node_type = self.table_inputs.item(row, 2).text()
             rstexbin_status = self.table_inputs.item(row, 4).text()
+            freshness_status = self.table_inputs.item(row, 5).text()
 
             # Check text search filter
             show_by_search = True
@@ -829,8 +920,17 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             elif type_filter == "file (UDIM)":
                 show_by_type = node_type == "file (UDIM)"
 
+            # Check freshness filter
+            show_by_freshness = True
+            if freshness_filter == "Up-to-date":
+                show_by_freshness = freshness_status == "Up-to-date"
+            elif freshness_filter == "Outdated":
+                show_by_freshness = freshness_status == "Outdated"
+            elif freshness_filter == "Not Converted":
+                show_by_freshness = freshness_status == "Not Converted"
+
             # Show/hide row based on ALL filters (AND logic)
-            show_row = show_by_search and show_by_rstexbin and show_by_type
+            show_row = show_by_search and show_by_rstexbin and show_by_type and show_by_freshness
             self.table_inputs.setRowHidden(row, not show_row)
 
     def _on_table_context_menu(self, pos):
