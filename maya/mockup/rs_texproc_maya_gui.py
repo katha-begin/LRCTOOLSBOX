@@ -70,17 +70,31 @@ def _get_mtime(p: str) -> float:
 def _compare_timestamps(source_path: str, rstexbin_path: str) -> str:
     """
     Compare modification timestamps between source and .rstexbin file.
+    Handles cases where source file has future timestamp (machine clock issue).
 
     Returns:
         "Up-to-date" - .rstexbin exists and is newer or same age as source
         "Outdated" - .rstexbin exists but source is newer
         "Not Converted" - .rstexbin doesn't exist
     """
+    import time
+
     source_mtime = _get_mtime(source_path)
     rstexbin_mtime = _get_mtime(rstexbin_path)
 
     if rstexbin_mtime == 0.0:
         return "Not Converted"
+
+    # Check if source has a future timestamp (machine clock issue)
+    # If source is more than 6 months in the future, subtract 1 year
+    current_time = time.time()
+    six_months_seconds = 6 * 30 * 24 * 60 * 60  # Approximate 6 months
+    one_year_seconds = 365 * 24 * 60 * 60
+
+    if source_mtime > current_time + six_months_seconds:
+        # Source is significantly in the future - likely a clock issue
+        # Subtract 1 year to normalize the timestamp
+        source_mtime = source_mtime - one_year_seconds
 
     # If source is newer than rstexbin, it's outdated
     if source_mtime > rstexbin_mtime:
