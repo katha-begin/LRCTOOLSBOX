@@ -713,18 +713,18 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             is_udim = "<UDIM>" in texture_path or "<udim>" in texture_path
 
             if is_udim:
-                # For UDIM, expand tiles and check each one's expected output path
+                # For UDIM, expand tiles and check if .rstexbin exists next to each tile
                 tiles = _expand_udim_tiles(texture_path)
                 rstexbin_count = 0
 
                 for tile in tiles:
-                    # Calculate expected output path for this tile
-                    expected_output = _expected_rstexbin_path(tile, out_dir=out_dir)
-                    # DEBUG: Print what we're checking
-                    print(f"DEBUG: Checking UDIM tile: {tile}")
-                    print(f"DEBUG: Expected output: {expected_output}")
-                    print(f"DEBUG: Exists: {_path_exists(expected_output)}")
-                    if _path_exists(expected_output):
+                    # Simple: replace extension with .rstexbin
+                    # E.g., catStompyBody_SheenRoughness_1001.png -> catStompyBody_SheenRoughness_1001.rstexbin
+                    tile_path = Path(tile)
+                    rstexbin_file = tile_path.parent / (tile_path.stem + ".rstexbin")
+                    rstexbin_path = _norm(str(rstexbin_file))
+
+                    if _path_exists(rstexbin_path):
                         rstexbin_count += 1
 
                 # Update status: show count of converted tiles
