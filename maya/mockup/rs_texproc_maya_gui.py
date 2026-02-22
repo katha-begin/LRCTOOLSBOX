@@ -778,6 +778,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self._log(f"\n--- TEXTURE INSPECTION ---")
         self._log(f"Path: {texture_path}")
 
+        # Get current output directory setting
+        out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
+
         # Check if UDIM
         is_udim = "<UDIM>" in texture_path or "<udim>" in texture_path
 
@@ -788,23 +791,23 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             if tiles:
                 self._log(f"\nTile Files:")
                 for tile in tiles:
-                    exists = "[OK]" if os.path.exists(tile) else "[X]"
-                    size = os.path.getsize(tile) if os.path.exists(tile) else 0
+                    exists = "[OK]" if _path_exists(tile) else "[X]"
+                    size = os.path.getsize(tile.replace("/", os.sep)) if _path_exists(tile) else 0
                     size_mb = size / (1024 * 1024)
                     self._log(f"  {exists} {os.path.basename(tile)} ({size_mb:.2f} MB)")
         else:
             # Regular texture
             self._log(f"Type: Single Texture")
-            if os.path.exists(texture_path):
-                size = os.path.getsize(texture_path)
+            if _path_exists(texture_path):
+                size = os.path.getsize(texture_path.replace("/", os.sep))
                 size_mb = size / (1024 * 1024)
                 self._log(f"Size: {size_mb:.2f} MB")
                 self._log(f"Status: [OK] File exists")
 
-                # Check for .rstexbin
-                rstexbin_path = texture_path + ".rstexbin"
-                if os.path.exists(rstexbin_path):
-                    rstexbin_size = os.path.getsize(rstexbin_path)
+                # Check for .rstexbin using expected output path logic
+                rstexbin_path = _expected_rstexbin_path(texture_path, out_dir=out_dir)
+                if _path_exists(rstexbin_path):
+                    rstexbin_size = os.path.getsize(rstexbin_path.replace("/", os.sep))
                     rstexbin_mb = rstexbin_size / (1024 * 1024)
                     self._log(f".rstexbin: [OK] Exists ({rstexbin_mb:.2f} MB)")
                 else:
@@ -855,8 +858,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
 
         total_size = 0
         for i, tile in enumerate(tiles, 1):
-            if os.path.exists(tile):
-                size = os.path.getsize(tile)
+            if _path_exists(tile):
+                size = os.path.getsize(tile.replace("/", os.sep))
                 total_size += size
                 size_mb = size / (1024 * 1024)
                 self._log(f"  {i:2d}. {os.path.basename(tile)} ({size_mb:.2f} MB)")
