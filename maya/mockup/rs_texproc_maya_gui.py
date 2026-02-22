@@ -739,6 +739,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         # Get current output directory setting
         out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
 
+        # DEBUG
+        print(f"DEBUG _refresh_table_status: out_dir='{out_dir}'")
+
         for row in range(self.table_inputs.rowCount()):
             texture_path = self.table_inputs.item(row, 0).text()
 
@@ -777,6 +780,10 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 expected_output = _expected_rstexbin_path(texture_path, out_dir=out_dir)
                 has_rstexbin = _path_exists(expected_output)
                 status_text = "YES" if has_rstexbin else "NO"
+                # DEBUG
+                print(f"DEBUG: texture_path={texture_path}")
+                print(f"DEBUG: expected_output={expected_output}")
+                print(f"DEBUG: exists={has_rstexbin}")
                 status_item = QtWidgets.QTableWidgetItem(status_text)
                 status_item.setTextAlignment(QtCore.Qt.AlignCenter)
 
