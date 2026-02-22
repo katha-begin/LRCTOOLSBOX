@@ -422,6 +422,10 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.combo_type_filter.addItems(["All Types", "file", "file (UDIM)"])
         self.combo_type_filter.setMaximumWidth(150)
 
+        self.ed_search = QtWidgets.QLineEdit()
+        self.ed_search.setPlaceholderText("Search by path or node name...")
+        self.ed_search.setMaximumWidth(300)
+
         # --- Inputs Table (replaces list widget) ---
         self.table_inputs = QtWidgets.QTableWidget()
         self.table_inputs.setColumnCount(5)
@@ -505,6 +509,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         # Filter signals
         self.combo_rstexbin_filter.currentIndexChanged.connect(self._apply_filters)
         self.combo_type_filter.currentIndexChanged.connect(self._apply_filters)
+        self.ed_search.textChanged.connect(self._apply_filters)
 
     def _create_main_tab_layout(self, parent):
         """Create the main conversion tab layout."""
@@ -564,6 +569,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         filter_layout.addWidget(self.combo_rstexbin_filter)
         filter_layout.addWidget(QtWidgets.QLabel("Type:"))
         filter_layout.addWidget(self.combo_type_filter)
+        filter_layout.addWidget(QtWidgets.QLabel("Search:"))
+        filter_layout.addWidget(self.ed_search)
         filter_layout.addStretch(1)
         main.addLayout(filter_layout)
 
@@ -739,9 +746,6 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         # Get current output directory setting
         out_dir = self.ed_out.text().strip() if self.chk_custom_out.isChecked() else ""
 
-        # DEBUG
-        print(f"DEBUG _refresh_table_status: out_dir='{out_dir}'")
-
         for row in range(self.table_inputs.rowCount()):
             texture_path = self.table_inputs.item(row, 0).text()
 
@@ -780,10 +784,6 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 expected_output = _expected_rstexbin_path(texture_path, out_dir=out_dir)
                 has_rstexbin = _path_exists(expected_output)
                 status_text = "YES" if has_rstexbin else "NO"
-                # DEBUG
-                print(f"DEBUG: texture_path={texture_path}")
-                print(f"DEBUG: expected_output={expected_output}")
-                print(f"DEBUG: exists={has_rstexbin}")
                 status_item = QtWidgets.QTableWidgetItem(status_text)
                 status_item.setTextAlignment(QtCore.Qt.AlignCenter)
 
@@ -795,15 +795,23 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             self.table_inputs.setItem(row, 4, status_item)
 
     def _apply_filters(self):
-        """Apply .rstexbin status and type filters to the table."""
+        """Apply .rstexbin status, type, and text search filters to the table."""
         rstexbin_filter = self.combo_rstexbin_filter.currentText()
         type_filter = self.combo_type_filter.currentText()
+        search_text = self.ed_search.text().strip().lower()  # Case-insensitive
 
         for row in range(self.table_inputs.rowCount()):
             # Get row data
             texture_path = self.table_inputs.item(row, 0).text()
+            node_name = self.table_inputs.item(row, 1).text()
             node_type = self.table_inputs.item(row, 2).text()
             rstexbin_status = self.table_inputs.item(row, 4).text()
+
+            # Check text search filter
+            show_by_search = True
+            if search_text:
+                show_by_search = (search_text in texture_path.lower() or
+                                search_text in node_name.lower())
 
             # Check .rstexbin filter
             show_by_rstexbin = True
@@ -821,8 +829,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             elif type_filter == "file (UDIM)":
                 show_by_type = node_type == "file (UDIM)"
 
-            # Show/hide row based on both filters
-            show_row = show_by_rstexbin and show_by_type
+            # Show/hide row based on ALL filters (AND logic)
+            show_row = show_by_search and show_by_rstexbin and show_by_type
             self.table_inputs.setRowHidden(row, not show_row)
 
     def _on_table_context_menu(self, pos):
