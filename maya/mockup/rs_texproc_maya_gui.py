@@ -45,7 +45,16 @@ TEXTURE_NODE_TYPES = {
 
 
 def _norm(p: str) -> str:
+    """Normalize path to use forward slashes."""
     return p.replace("\\", "/")
+
+
+def _path_exists(p: str) -> bool:
+    """Check if path exists, handling both forward and backslashes."""
+    if not p:
+        return False
+    # Convert to OS-native path for os.path.exists()
+    return os.path.exists(p.replace("/", os.sep))
 
 
 def _ocio_from_env_or_default() -> str:
@@ -191,8 +200,8 @@ def _expected_rstexbin_path(src_file: str, out_dir: str = "") -> str:
     """
     src = Path(src_file)
     if out_dir:
-        return str(Path(out_dir) / (src.name + ".rstexbin"))
-    return str(Path(str(src)) .with_name(src.name + ".rstexbin"))
+        return _norm(str(Path(out_dir) / (src.name + ".rstexbin")))
+    return _norm(str(src.with_name(src.name + ".rstexbin")))
 
 
 def _build_cmd(texproc_exe: str, in_file: str, ocio_file: str,
@@ -265,9 +274,9 @@ def _scan_scene_textures():
                     continue
                 seen_paths.add(path_key)
 
-                # Check if .rstexbin exists
-                rstexbin_path = tex_path_norm + ".rstexbin"
-                has_rstexbin = os.path.exists(rstexbin_path)
+                # Check if .rstexbin exists (use expected output path logic)
+                rstexbin_path = _expected_rstexbin_path(tex_path_norm, out_dir="")
+                has_rstexbin = _path_exists(rstexbin_path)
 
                 textures.append((tex_path_norm, node, node_type, has_rstexbin))
 
@@ -705,7 +714,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
                 for tile in tiles:
                     # Calculate expected output path for this tile
                     expected_output = _expected_rstexbin_path(tile, out_dir=out_dir)
-                    if os.path.exists(expected_output):
+                    if _path_exists(expected_output):
                         rstexbin_count += 1
 
                 # Update status: show count of converted tiles
@@ -723,7 +732,7 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
             else:
                 # For regular textures, check expected output path
                 expected_output = _expected_rstexbin_path(texture_path, out_dir=out_dir)
-                has_rstexbin = os.path.exists(expected_output)
+                has_rstexbin = _path_exists(expected_output)
                 status_text = "YES" if has_rstexbin else "NO"
                 status_item = QtWidgets.QTableWidgetItem(status_text)
                 status_item.setTextAlignment(QtCore.Qt.AlignCenter)
