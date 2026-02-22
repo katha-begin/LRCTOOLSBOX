@@ -394,8 +394,8 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
 
         # --- Inputs Table (replaces list widget) ---
         self.table_inputs = QtWidgets.QTableWidget()
-        self.table_inputs.setColumnCount(4)
-        self.table_inputs.setHorizontalHeaderLabels(["Texture Path", "Node", "Type", ".rstexbin"])
+        self.table_inputs.setColumnCount(5)
+        self.table_inputs.setHorizontalHeaderLabels(["Texture Path", "Node", "Type", "Tiles", ".rstexbin"])
         self.table_inputs.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table_inputs.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table_inputs.setAlternatingRowColors(True)
@@ -404,6 +404,11 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.table_inputs.setColumnWidth(1, 150)
         self.table_inputs.setColumnWidth(2, 100)
         self.table_inputs.setColumnWidth(3, 80)
+        self.table_inputs.setColumnWidth(4, 80)
+
+        # Enable right-click context menu
+        self.table_inputs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.table_inputs.customContextMenuRequested.connect(self._on_table_context_menu)
 
         self.btn_add_files = QtWidgets.QPushButton("Add Files…")
         self.btn_add_folder = QtWidgets.QPushButton("Add Folder…")
@@ -641,39 +646,168 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         # Check if this is a UDIM pattern
         is_udim = "<UDIM>" in path or "<udim>" in path
 
-        # Display path with UDIM indicator
-        path_display = path
+        # Get tile count
+        tile_count = 0
         if is_udim:
             tiles = _expand_udim_tiles(path)
-            path_display = f"{path}  [{len(tiles)} tiles]" if tiles else f"{path}  [0 tiles]"
+            tile_count = len(tiles)
 
-        self.table_inputs.setItem(row, 0, QtWidgets.QTableWidgetItem(path_display))
+        # Display path (without tile count in path column)
+        self.table_inputs.setItem(row, 0, QtWidgets.QTableWidgetItem(path))
         self.table_inputs.setItem(row, 1, QtWidgets.QTableWidgetItem(node))
 
         # Show node type with UDIM indicator
         node_type_display = f"{node_type} (UDIM)" if is_udim else node_type
         self.table_inputs.setItem(row, 2, QtWidgets.QTableWidgetItem(node_type_display))
 
-        # Status: for UDIM, show tile count instead of .rstexbin status
+        # Tiles column: show count for UDIM, empty for regular textures
         if is_udim:
-            tiles = _expand_udim_tiles(path)
-            status_text = f"{len(tiles)} tiles"
-            status_item = QtWidgets.QTableWidgetItem(status_text)
-            status_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            status_item.setForeground(QtGui.QColor(100, 150, 200))  # Blue for UDIM
+            tiles_item = QtWidgets.QTableWidgetItem(str(tile_count))
+            tiles_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            tiles_item.setForeground(QtGui.QColor(100, 150, 200))  # Blue for UDIM
         else:
-            status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
-            status_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            if has_rstexbin:
-                status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
-            else:
-                status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+            tiles_item = QtWidgets.QTableWidgetItem("-")
+            tiles_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            tiles_item.setForeground(QtGui.QColor(150, 150, 150))  # Gray for non-UDIM
 
-        self.table_inputs.setItem(row, 3, status_item)
+        self.table_inputs.setItem(row, 3, tiles_item)
+
+        # .rstexbin status column
+        status_item = QtWidgets.QTableWidgetItem("✓" if has_rstexbin else "✗")
+        status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        if has_rstexbin:
+            status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+        else:
+            status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+
+        self.table_inputs.setItem(row, 4, status_item)
 
     def _clear_table(self):
         """Clear all entries from the table."""
         self.table_inputs.setRowCount(0)
+
+    def _on_table_context_menu(self, pos):
+        """Handle right-click context menu on table."""
+        item = self.table_inputs.itemAt(pos)
+        if not item:
+            return
+
+        row = item.row()
+        texture_path = self.table_inputs.item(row, 0).text()
+
+        # Create context menu
+        menu = QtWidgets.QMenu(self)
+
+        # Inspect action
+        action_inspect = menu.addAction("Inspect Texture")
+        action_inspect.triggered.connect(lambda: self._inspect_texture(texture_path))
+
+        # Open folder action
+        action_open_folder = menu.addAction("Open Folder")
+        action_open_folder.triggered.connect(lambda: self._open_texture_folder(texture_path))
+
+        # Show UDIM tiles action (only for UDIM textures)
+        if "<UDIM>" in texture_path or "<udim>" in texture_path:
+            menu.addSeparator()
+            action_show_tiles = menu.addAction("Show UDIM Tiles")
+            action_show_tiles.triggered.connect(lambda: self._show_udim_tiles(texture_path))
+
+        # Show menu at cursor position
+        menu.exec_(self.table_inputs.mapToGlobal(pos))
+
+    def _inspect_texture(self, texture_path):
+        """Open texture inspection window."""
+        self._log(f"\n--- TEXTURE INSPECTION ---")
+        self._log(f"Path: {texture_path}")
+
+        # Check if UDIM
+        is_udim = "<UDIM>" in texture_path or "<udim>" in texture_path
+
+        if is_udim:
+            tiles = _expand_udim_tiles(texture_path)
+            self._log(f"Type: UDIM Pattern")
+            self._log(f"Tiles Found: {len(tiles)}")
+            if tiles:
+                self._log(f"\nTile Files:")
+                for tile in tiles:
+                    exists = "✓" if os.path.exists(tile) else "✗"
+                    size = os.path.getsize(tile) if os.path.exists(tile) else 0
+                    size_mb = size / (1024 * 1024)
+                    self._log(f"  {exists} {os.path.basename(tile)} ({size_mb:.2f} MB)")
+        else:
+            # Regular texture
+            self._log(f"Type: Single Texture")
+            if os.path.exists(texture_path):
+                size = os.path.getsize(texture_path)
+                size_mb = size / (1024 * 1024)
+                self._log(f"Size: {size_mb:.2f} MB")
+                self._log(f"Status: ✓ File exists")
+
+                # Check for .rstexbin
+                rstexbin_path = texture_path + ".rstexbin"
+                if os.path.exists(rstexbin_path):
+                    rstexbin_size = os.path.getsize(rstexbin_path)
+                    rstexbin_mb = rstexbin_size / (1024 * 1024)
+                    self._log(f".rstexbin: ✓ Exists ({rstexbin_mb:.2f} MB)")
+                else:
+                    self._log(f".rstexbin: ✗ Not found")
+            else:
+                self._log(f"Status: ✗ File not found")
+
+        self._log("")
+
+    def _open_texture_folder(self, texture_path):
+        """Open the folder containing the texture."""
+        import subprocess
+        import platform
+
+        # Get directory
+        if "<UDIM>" in texture_path or "<udim>" in texture_path:
+            # For UDIM, open the directory of the pattern
+            folder = os.path.dirname(texture_path)
+        else:
+            folder = os.path.dirname(texture_path)
+
+        if not os.path.isdir(folder):
+            self._log(f"ERROR: Folder not found: {folder}")
+            return
+
+        try:
+            if platform.system() == "Windows":
+                os.startfile(folder)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.Popen(["open", folder])
+            else:  # Linux
+                subprocess.Popen(["xdg-open", folder])
+            self._log(f"Opened folder: {folder}")
+        except Exception as e:
+            self._log(f"ERROR: Could not open folder: {e}")
+
+    def _show_udim_tiles(self, texture_path):
+        """Show all UDIM tiles in a detailed view."""
+        tiles = _expand_udim_tiles(texture_path)
+
+        self._log(f"\n--- UDIM TILES DETAIL ---")
+        self._log(f"Pattern: {texture_path}")
+        self._log(f"Total Tiles: {len(tiles)}\n")
+
+        if not tiles:
+            self._log("No tiles found!")
+            return
+
+        total_size = 0
+        for i, tile in enumerate(tiles, 1):
+            if os.path.exists(tile):
+                size = os.path.getsize(tile)
+                total_size += size
+                size_mb = size / (1024 * 1024)
+                self._log(f"  {i:2d}. {os.path.basename(tile)} ({size_mb:.2f} MB)")
+            else:
+                self._log(f"  {i:2d}. {os.path.basename(tile)} (✗ NOT FOUND)")
+
+        total_mb = total_size / (1024 * 1024)
+        self._log(f"\nTotal Size: {total_mb:.2f} MB")
+        self._log("")
 
     def _remove_selected(self):
         """Remove selected rows from the table."""
