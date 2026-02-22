@@ -686,6 +686,48 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         """Clear all entries from the table."""
         self.table_inputs.setRowCount(0)
 
+    def _refresh_table_status(self):
+        """Refresh .rstexbin status for all textures in the table."""
+        for row in range(self.table_inputs.rowCount()):
+            texture_path = self.table_inputs.item(row, 0).text()
+
+            # Check if UDIM pattern
+            is_udim = "<UDIM>" in texture_path or "<udim>" in texture_path
+
+            if is_udim:
+                # For UDIM, check if any tiles have .rstexbin
+                tiles = _expand_udim_tiles(texture_path)
+                rstexbin_count = 0
+                for tile in tiles:
+                    if os.path.exists(tile + ".rstexbin"):
+                        rstexbin_count += 1
+
+                # Update status: show count of converted tiles
+                status_text = f"{rstexbin_count}/{len(tiles)}"
+                status_item = QtWidgets.QTableWidgetItem(status_text)
+                status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+
+                # Color based on conversion progress
+                if rstexbin_count == len(tiles):
+                    status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green - all done
+                elif rstexbin_count > 0:
+                    status_item.setForeground(QtGui.QColor(200, 150, 0))  # Orange - partial
+                else:
+                    status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red - none done
+            else:
+                # For regular textures, check if .rstexbin exists
+                has_rstexbin = os.path.exists(texture_path + ".rstexbin")
+                status_text = "YES" if has_rstexbin else "NO"
+                status_item = QtWidgets.QTableWidgetItem(status_text)
+                status_item.setTextAlignment(QtCore.Qt.AlignCenter)
+
+                if has_rstexbin:
+                    status_item.setForeground(QtGui.QColor(0, 150, 0))  # Green
+                else:
+                    status_item.setForeground(QtGui.QColor(200, 0, 0))  # Red
+
+            self.table_inputs.setItem(row, 4, status_item)
+
     def _on_table_context_menu(self, pos):
         """Handle right-click context menu on table."""
         item = self.table_inputs.itemAt(pos)
@@ -933,6 +975,9 @@ class RSTextureProcessorMayaUI(QtWidgets.QDialog):
         self.btn_run.setEnabled(True)
         self.btn_preview.setEnabled(True)
         self.btn_cancel.setEnabled(False)
+
+        # Refresh .rstexbin status in table
+        self._refresh_table_status()
 
         # Update scene if requested
         if self.chk_update_scene.isChecked() and success_count > 0:
