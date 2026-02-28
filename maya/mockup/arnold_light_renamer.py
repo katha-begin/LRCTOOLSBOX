@@ -1365,6 +1365,8 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
 
         # Perform rename and assign light group
         renamed_count = 0
+        arnold_group_count = 0
+        redshift_group_count = 0
         errors = []
 
         cmds.undoInfo(openChunk=True)
@@ -1381,12 +1383,19 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
                         renamed_count += 1
 
                         # Auto-assign light group if it's an Arnold or Redshift light
-                        if light_group_name and (is_arnold_light(renamed_light) or is_redshift_light(renamed_light)):
-                            set_light_group(renamed_light, light_group_name)
-
-                            # Add to cache if not exists
-                            if light_group_name not in self._light_groups_cache:
-                                self._light_groups_cache.append(light_group_name)
+                        if light_group_name:
+                            if is_arnold_light(renamed_light):
+                                set_light_group(renamed_light, light_group_name)
+                                arnold_group_count += 1
+                                # Add to cache if not exists
+                                if light_group_name not in self._light_groups_cache:
+                                    self._light_groups_cache.append(light_group_name)
+                            elif is_redshift_light(renamed_light):
+                                set_light_group(renamed_light, light_group_name)
+                                redshift_group_count += 1
+                                # Add to cache if not exists
+                                if light_group_name not in self._light_groups_cache:
+                                    self._light_groups_cache.append(light_group_name)
 
                 except Exception as e:
                     errors.append(safe_format("{0}: {1}", old_name, to_text(e)))
@@ -1400,7 +1409,16 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
         else:
             msg = safe_format("Renamed {0} lights!", renamed_count)
             if light_group_name:
-                msg += safe_format("\n\nLight group '{0}' assigned to Arnold lights.", light_group_name)
+                # Build detailed message about which renderer types received the group
+                group_msg_parts = []
+                if arnold_group_count > 0:
+                    group_msg_parts.append(safe_format("Arnold ({0})", arnold_group_count))
+                if redshift_group_count > 0:
+                    group_msg_parts.append(safe_format("Redshift ({0})", redshift_group_count))
+
+                if group_msg_parts:
+                    group_msg = " + ".join(group_msg_parts)
+                    msg += safe_format("\n\nLight group '{0}' assigned to {1} lights.", light_group_name, group_msg)
             QtWidgets.QMessageBox.information(self, "Success", msg)
 
         # Refresh UI
