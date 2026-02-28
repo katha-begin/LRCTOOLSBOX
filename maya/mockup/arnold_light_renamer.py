@@ -1287,7 +1287,8 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
 
         # Generate preview for all selected lights
         for i, item in enumerate(selected_items):
-            old_name = item.text().replace("[A] ", "").replace("[L] ", "")
+            # Remove all renderer prefixes ([A], [R], [L])
+            old_name = item.text().replace("[A] ", "").replace("[R] ", "").replace("[L] ", "")
             new_name = self.generate_new_name(prefix, base, suffix, i)
 
             preview_text = safe_format("{0}  ->  {1}", old_name, new_name)
@@ -1369,7 +1370,8 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
         cmds.undoInfo(openChunk=True)
         try:
             for i, item in enumerate(selected_items):
-                old_name = item.text().replace("[A] ", "").replace("[L] ", "")
+                # Remove all renderer prefixes ([A], [R], [L])
+                old_name = item.text().replace("[A] ", "").replace("[R] ", "").replace("[L] ", "")
                 new_name = self.generate_new_name(prefix, base, suffix, i)
 
                 try:
@@ -1378,8 +1380,8 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
                         renamed_light = cmds.rename(old_name, new_name)
                         renamed_count += 1
 
-                        # Auto-assign light group if it's an Arnold light
-                        if light_group_name and is_arnold_light(renamed_light):
+                        # Auto-assign light group if it's an Arnold or Redshift light
+                        if light_group_name and (is_arnold_light(renamed_light) or is_redshift_light(renamed_light)):
                             set_light_group(renamed_light, light_group_name)
 
                             # Add to cache if not exists
@@ -1513,10 +1515,11 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
             cmds.undoInfo(openChunk=True)
             try:
                 for light in get_all_lights_in_scene():
-                    if is_arnold_light(light):
+                    # Process both Arnold and Redshift lights
+                    if is_arnold_light(light) or is_redshift_light(light):
                         light_group = get_light_group(light)
                         if light_group:
-                            # Handle multiple groups
+                            # Handle multiple groups (Arnold) or single group (Redshift)
                             groups = [g.strip() for g in light_group.split(',')]
                             if old_group_name in groups:
                                 # Replace old with new
@@ -1566,10 +1569,11 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
         cmds.undoInfo(openChunk=True)
         try:
             for light in get_all_lights_in_scene():
-                if is_arnold_light(light):
+                # Process both Arnold and Redshift lights
+                if is_arnold_light(light) or is_redshift_light(light):
                     light_group = get_light_group(light)
                     if light_group:
-                        # Handle multiple groups
+                        # Handle multiple groups (Arnold) or single group (Redshift)
                         groups = [g.strip() for g in light_group.split(',') if g.strip()]
                         if group_name in groups:
                             groups.remove(group_name)
