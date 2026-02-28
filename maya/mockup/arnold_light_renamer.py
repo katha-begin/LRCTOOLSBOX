@@ -7,7 +7,7 @@ A unified tool for managing lights and light groups for both Arnold and Redshift
 Features:
 - 3-column layout: Selection | Rename | Light Groups
 - Rename lights with prefix, base name, suffix, and numbering
-- Manage light groups for both Arnold (aiAov) and Redshift (rsLightGroup)
+- Manage light groups for both Arnold (aiAov) and Redshift (aovLightGroup)
 - Auto-detect renderer type and apply correct attributes
 - Support mixed Arnold + Redshift scenes
 - Text filters for quick light selection
@@ -15,7 +15,7 @@ Features:
 
 Supported Renderers:
 - Arnold: Uses 'aiAov' attribute (comma-separated groups)
-- Redshift: Uses 'rsLightGroup' attribute (single group)
+- Redshift: Uses 'aovLightGroup' attribute (single group)
 - Standard Maya lights: No light group support
 
 Author: Katha
@@ -344,17 +344,17 @@ def get_arnold_light_group(light_name):
 
 def get_redshift_light_group(light_name):
     """
-    Get Redshift light group from light's rsLightGroup attribute.
+    Get Redshift light group from light's aovLightGroup attribute.
 
     Args:
         light_name (str): Name of the Redshift light transform node
 
     Returns:
-        str: Light group name from rsLightGroup attribute
+        str: Light group name from aovLightGroup attribute
              Empty string if no light group is set or light is not Redshift
 
     Redshift Light Group Attribute:
-        - Attribute: rsLightGroup (string)
+        - Attribute: aovLightGroup (string)
         - Format: Single group name (e.g., "char_key")
         - Multiple groups: NOT supported (Redshift limitation)
 
@@ -378,7 +378,7 @@ def get_redshift_light_group(light_name):
             return ""
 
         shape = shapes[0]
-        attr_name = safe_format("{0}.rsLightGroup", shape)
+        attr_name = safe_format("{0}.aovLightGroup", shape)
 
         if cmds.objExists(attr_name):
             try:
@@ -398,7 +398,7 @@ def get_light_group(light_name):
 
     Auto-detects renderer type and retrieves the appropriate light group attribute:
     - Arnold: Uses aiAov attribute (supports multiple comma-separated groups)
-    - Redshift: Uses rsLightGroup attribute (single group only)
+    - Redshift: Uses aovLightGroup attribute (single group only)
     - Standard Maya lights: Returns empty string (no light group support)
 
     Args:
@@ -483,7 +483,7 @@ def set_arnold_light_group(light_name, light_group):
 
 def set_redshift_light_group(light_name, light_group):
     """
-    Set Redshift light group on light's rsLightGroup attribute.
+    Set Redshift light group on light's aovLightGroup attribute.
 
     Args:
         light_name (str): Name of the Redshift light transform node
@@ -493,7 +493,7 @@ def set_redshift_light_group(light_name, light_group):
         bool: True if successfully set, False otherwise
 
     Redshift Light Group Attribute:
-        - Attribute: rsLightGroup (string)
+        - Attribute: aovLightGroup (string)
         - Format: Single group name (e.g., "char_key")
         - Multiple groups: NOT supported (Redshift limitation)
 
@@ -531,7 +531,7 @@ def set_redshift_light_group(light_name, light_group):
         if ',' in light_group:
             light_group = light_group.split(',')[0].strip()
 
-        attr_name = safe_format("{0}.rsLightGroup", shape)
+        attr_name = safe_format("{0}.aovLightGroup", shape)
 
         if cmds.objExists(attr_name):
             try:
@@ -551,7 +551,7 @@ def set_light_group(light_name, light_group):
 
     Auto-detects renderer type and sets the appropriate light group attribute:
     - Arnold: Sets aiAov attribute (supports multiple comma-separated groups)
-    - Redshift: Sets rsLightGroup attribute (single group only, takes first if multiple)
+    - Redshift: Sets aovLightGroup attribute (single group only, takes first if multiple)
     - Standard Maya lights: Returns False (no light group support)
 
     Args:
@@ -585,7 +585,7 @@ def get_all_light_groups_in_scene():
 
     Scans all Arnold and Redshift lights in the scene and collects their light groups:
     - Arnold: Reads from aiAov attribute (splits comma-separated groups)
-    - Redshift: Reads from rsLightGroup attribute (single group)
+    - Redshift: Reads from aovLightGroup attribute (single group)
 
     Returns:
         list: Sorted list of unique light group names found in the scene
@@ -618,13 +618,13 @@ def get_all_light_groups_in_scene():
         except Exception:
             pass
 
-    # Get Redshift light groups (rsLightGroup attribute)
+    # Get Redshift light groups (aovLightGroup attribute)
     for light_type in REDSHIFT_LIGHT_TYPES:
         try:
             lights = cmds.ls(type=light_type, long=True) or []
             for light_shape in lights:
                 try:
-                    attr_name = safe_format("{0}.rsLightGroup", light_shape)
+                    attr_name = safe_format("{0}.aovLightGroup", light_shape)
                     if cmds.objExists(attr_name):
                         group_value = cmds.getAttr(attr_name) or ""
                         if group_value:
@@ -1670,7 +1670,7 @@ class ArnoldLightRenamerUI(QtWidgets.QDialog):
 
         Updates light group attributes for both Arnold and Redshift lights:
         - Arnold: Sets aiAov attribute
-        - Redshift: Sets rsLightGroup attribute
+        - Redshift: Sets aovLightGroup attribute
         """
         if not cmds:
             QtWidgets.QMessageBox.warning(self, "Error", "Maya commands not available!")
